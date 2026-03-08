@@ -1,26 +1,121 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+@custom-variant dark (&:is(.dark *));
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-inter);
+  --font-heading: var(--font-libre-baskerville);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+  /* Everest brand tokens */
+  --color-brand-success: var(--brand-success);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+:root {
+  --radius: 0.625rem;
+
+  /* Everest brand palette */
+  /* Slate Blue #4A6FA5 */  --brand-primary: oklch(0.485 0.092 255);
+  /* Teal #2ABFBF       */  --brand-secondary: oklch(0.73 0.11 192);
+  /* Amber #F59E0B      */  --brand-accent: oklch(0.76 0.18 72);
+  /* Green #10B981      */  --brand-success: oklch(0.70 0.16 162);
+
+  /* shadcn/ui semantic tokens → Everest brand */
+  --background: oklch(1 0 0);                   /* White */
+  --foreground: oklch(0.22 0.02 264);            /* Charcoal #1F2937 */
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.22 0.02 264);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.22 0.02 264);
+  --primary: oklch(0.485 0.092 255);             /* Slate Blue */
+  --primary-foreground: oklch(1 0 0);            /* White */
+  --secondary: oklch(0.73 0.11 192);             /* Teal */
+  --secondary-foreground: oklch(1 0 0);          /* White */
+  --muted: oklch(0.97 0.003 264);                /* Light Gray #F3F4F6 */
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.76 0.18 72);                 /* Amber */
+  --accent-foreground: oklch(0.22 0.02 264);     /* Charcoal on Amber */
+  --destructive: oklch(0.577 0.245 27.325);      /* Red #EF4444 */
+  --border: oklch(0.92 0.005 264);
+  --input: oklch(0.92 0.005 264);
+  --ring: oklch(0.485 0.092 255);                /* Slate Blue focus ring */
+
+  /* Chart colors (project/income visualization) */
+  --chart-1: oklch(0.485 0.092 255);             /* Slate Blue */
+  --chart-2: oklch(0.73 0.11 192);               /* Teal */
+  --chart-3: oklch(0.76 0.18 72);                /* Amber */
+  --chart-4: oklch(0.70 0.16 162);               /* Green */
+  --chart-5: oklch(0.577 0.245 27.325);          /* Red */
+
+  /* Sidebar */
+  --sidebar: oklch(0.97 0.003 264);              /* Light Gray surface */
+  --sidebar-foreground: oklch(0.22 0.02 264);
+  --sidebar-primary: oklch(0.485 0.092 255);     /* Slate Blue active item */
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.93 0.005 264);       /* Hover state */
+  --sidebar-accent-foreground: oklch(0.22 0.02 264);
+  --sidebar-border: oklch(0.90 0.005 264);
+  --sidebar-ring: oklch(0.485 0.092 255);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-inter), system-ui, sans-serif;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-libre-baskerville), Georgia, serif;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+.dark {
+  --sidebar: hsl(240 5.9% 10%);
+  --sidebar-foreground: hsl(240 4.8% 95.9%);
+  --sidebar-primary: hsl(224.3 76.3% 48%);
+  --sidebar-primary-foreground: hsl(0 0% 100%);
+  --sidebar-accent: hsl(240 3.7% 15.9%);
+  --sidebar-accent-foreground: hsl(240 4.8% 95.9%);
+  --sidebar-border: hsl(240 3.7% 15.9%);
+  --sidebar-ring: hsl(217.2 91.2% 59.8%);
 }
