@@ -12,7 +12,8 @@ Named after the NK Rugged Landscape model — helping freelancers find and climb
 - **FullCalendar** v6 (`@fullcalendar/react`, `daygrid`, `timegrid`, `core`)
 - **Zustand** (state), **Recharts** (charts), **Lucide React** (icons)
 - **Fonts**: Inter (body/UI) + Libre Baskerville (headings)
-- **Deployment**: Vercel (not yet configured)
+- **Deployment**: Vercel — https://vercel.com/lincoln-gardners-projects/everest-app
+- **Source**: GitHub — https://github.com/Lincoln-Gardner-25/everest-app
 
 ## Brand
 - Primary (Slate Blue): `oklch(0.485 0.092 255)` / `#4A6FA5`
@@ -96,11 +97,16 @@ sessions/{sessionId}
 - [x] Calendar — FullCalendar month/week views, color-coded sessions as time blocks, completed projects as all-day revenue badges, project legend; dynamically imported (ssr: false)
 - [x] Settings — monthly goal + target rate + specialty; uses setDoc merge:true (safe for users who skipped onboarding)
 - [x] `firebase.json` for CLI deployments
+- [x] Projects delete error handling — try/catch in `handleDelete` with AlertCircle error banner; permission-specific error message
+- [x] GitHub repo created and all code pushed — https://github.com/Lincoln-Gardner-25/everest-app
+- [x] Vercel deployed — production deployment confirmed successful (status: success); GitHub → Vercel auto-deploy on every push to `main`
+- [x] All 7 Firebase env vars added to Vercel dashboard (`NEXT_PUBLIC_FIREBASE_*`)
+- [x] `.env.local` excluded from git (`.env*` pattern in `.gitignore`); `.claude/` session files also excluded
 
 ## What Still Needs Doing
-1. **Deploy Firestore rules** — paste `firestore.rules` into Firebase Console → Firestore → Rules → Publish
-2. **Deploy Firestore indexes** — run `npx firebase-tools login` then `npx firebase-tools deploy --only firestore:indexes --project everest-app-c7664` (or click the auto-generated links in browser console errors)
-3. **Deploy to Vercel** — run `npx vercel` from project root; add Firebase env vars in Vercel dashboard
+1. **Deploy Firestore rules** — paste `firestore.rules` into Firebase Console → Firestore → Rules → Publish (required for any reads/writes in production)
+2. **Deploy Firestore indexes** — run `npx firebase-tools login` then `npx firebase-tools deploy --only firestore:indexes --project everest-app-c7664` (or click auto-generated links in browser console errors on first Timer/Calendar load)
+3. **Add Vercel domain to Firebase Auth** — Firebase Console → Authentication → Settings → Authorized domains → add your Vercel production URL (e.g. `everest-app.vercel.app`) so Google sign-in works on the live site
 
 ## Important Notes
 - All APIs/services are $0 — Firebase Spark (free tier), Vercel Hobby (free)
@@ -112,3 +118,6 @@ sessions/{sessionId}
 - Firestore security rules are in `firestore.rules` — must be published in Firebase Console to allow reads/writes in production
 - Dev server: `npm run dev` → localhost:3000 (or port 3001 if 3000 is taken)
 - `.claude/launch.json` is configured for port 3001 (used by Claude's preview tool)
+- To deploy updates: `git add <files> && git commit -m "message" && git push` — Vercel auto-deploys from `main` on every push
+- GitHub repo: https://github.com/Lincoln-Gardner-25/everest-app
+- Vercel project: https://vercel.com/lincoln-gardners-projects/everest-app
