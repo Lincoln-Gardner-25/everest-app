@@ -57,9 +57,20 @@ export default function TimerPage() {
 
   useEffect(() => {
     if (!user) return;
-    return subscribeToProjects(user.uid, (all) => {
-      setProjects(all.filter((p) => p.status === "active"));
-    });
+    return subscribeToProjects(
+      user.uid,
+      (all) => {
+        setProjects(all.filter((p) => p.status === "active"));
+      },
+      (err) => {
+        console.error("subscribeToProjects error:", err);
+        setError(
+          err.message.includes("index")
+            ? "A Firestore index is missing. Check the browser console for a link to create it."
+            : `Failed to load projects: ${err.message}`
+        );
+      }
+    );
   }, [user]);
 
   useEffect(() => {

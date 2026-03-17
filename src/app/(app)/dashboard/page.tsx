@@ -5,7 +5,7 @@ import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
 import { subscribeToProjects, type Project } from "@/lib/projects";
-import { TrendingUp, TrendingDown, Minus, Clock, DollarSign, Briefcase } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, Clock, DollarSign, Briefcase, AlertCircle } from "lucide-react";
 
 interface UserProfile {
   monthlyGoal: number;
@@ -74,6 +74,7 @@ export default function DashboardPage() {
   const { user } = useAuth();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [projectsError, setProjectsError] = useState<string | null>(null);
 
   // Realtime user profile (monthly goal may change in Settings)
   useEffect(() => {
@@ -86,7 +87,14 @@ export default function DashboardPage() {
   // Realtime projects
   useEffect(() => {
     if (!user) return;
-    return subscribeToProjects(user.uid, setProjects);
+    return subscribeToProjects(user.uid, setProjects, (err) => {
+      console.error("subscribeToProjects error:", err);
+      setProjectsError(
+        err.message.includes("index")
+          ? "A Firestore index is missing. Check the browser console for a link to create it."
+          : `Failed to load projects: ${err.message}`
+      );
+    });
   }, [user]);
 
   // ── Derived stats ────────────────────────────────────────────────
@@ -143,6 +151,14 @@ export default function DashboardPage() {
         </h1>
         <p className="text-muted-foreground">{monthLabel} overview.</p>
       </div>
+
+      {/* Projects error */}
+      {projectsError && (
+        <div className="flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 mb-6">
+          <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+          <p className="text-sm text-destructive">{projectsError}</p>
+        </div>
+      )}
 
       {/* Pace banner */}
       <div

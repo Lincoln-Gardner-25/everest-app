@@ -2,7 +2,6 @@ import {
   collection,
   addDoc,
   updateDoc,
-  deleteDoc,
   doc,
   query,
   where,
@@ -10,6 +9,8 @@ import {
   onSnapshot,
   serverTimestamp,
   Timestamp,
+  getDocs,
+  writeBatch,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
@@ -54,7 +55,14 @@ export async function completeProject(projectId: string) {
 }
 
 export async function deleteProject(projectId: string) {
-  return deleteDoc(doc(db, "projects", projectId));
+  // Delete all sessions for this project, then the project itself, in one batch
+  const sessionsSnap = await getDocs(
+    query(collection(db, "sessions"), where("projectId", "==", projectId))
+  );
+  const batch = writeBatch(db);
+  sessionsSnap.docs.forEach((d) => batch.delete(d.ref));
+  batch.delete(doc(db, "projects", projectId));
+  return batch.commit();
 }
 
 export async function createHistoricalProject(
@@ -86,15 +94,20 @@ export async function createHistoricalProject(
 
 export function subscribeToProjects(
   userId: string,
-  callback: (projects: Project[]) => void
+  callback: (projects: Project[]) => void,
+  onError?: (err: Error) => void
 ) {
   const q = query(
     collection(db, "projects"),
     where("userId", "==", userId),
     orderBy("createdAt", "desc")
   );
-  return onSnapshot(q, (snap) => {
-    const projects = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Project));
-    callback(projects);
-  });
+  return onSnapshot(
+    q,
+    (snap) => {
+      const projects = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Project));
+      callback(projects);
+    },
+    onError
+  );
 }

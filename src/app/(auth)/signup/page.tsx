@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { doc, getDoc } from "firebase/firestore";
+import { auth, db } from "@/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import {
@@ -63,6 +65,15 @@ export default function SignupPage() {
     setError("");
     try {
       await signInWithGoogle();
+      // Check if this user already completed onboarding — if so, go to dashboard
+      const user = auth.currentUser;
+      if (user) {
+        const snap = await getDoc(doc(db, "users", user.uid));
+        if (snap.exists() && snap.data().onboardingComplete) {
+          router.push("/dashboard");
+          return;
+        }
+      }
       router.push("/onboarding");
     } catch {
       setError("Google sign-in failed. Please try again.");

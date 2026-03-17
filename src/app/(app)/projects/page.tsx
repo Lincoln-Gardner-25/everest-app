@@ -64,7 +64,14 @@ export default function ProjectsPage() {
 
   useEffect(() => {
     if (!user) return;
-    return subscribeToProjects(user.uid, setProjects);
+    return subscribeToProjects(user.uid, setProjects, (err) => {
+      console.error("subscribeToProjects error:", err);
+      setDeleteError(
+        err.message.includes("index")
+          ? "A Firestore index is missing. Check the browser console for a link to create it."
+          : `Failed to load projects: ${err.message}`
+      );
+    });
   }, [user]);
 
   const active = projects.filter((p) => p.status === "active");

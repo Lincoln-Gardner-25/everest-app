@@ -104,9 +104,7 @@ sessions/{sessionId}
 - [x] `.env.local` excluded from git (`.env*` pattern in `.gitignore`); `.claude/` session files also excluded
 
 ## What Still Needs Doing
-1. **Deploy Firestore rules** — paste `firestore.rules` into Firebase Console → Firestore → Rules → Publish (required for any reads/writes in production)
-2. **Deploy Firestore indexes** — run `npx firebase-tools login` then `npx firebase-tools deploy --only firestore:indexes --project everest-app-c7664` (or click auto-generated links in browser console errors on first Timer/Calendar load)
-3. **Add Vercel domain to Firebase Auth** — Firebase Console → Authentication → Settings → Authorized domains → add your Vercel production URL (e.g. `everest-app.vercel.app`) so Google sign-in works on the live site
+- Nothing — all deployment and configuration tasks are complete. The app is fully live.
 
 ## Important Notes
 - All APIs/services are $0 — Firebase Spark (free tier), Vercel Hobby (free)

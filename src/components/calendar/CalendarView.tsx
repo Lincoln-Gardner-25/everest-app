@@ -19,6 +19,15 @@ const PROJECT_COLORS = [
   "#F97316", // orange
 ];
 
+// Deterministic color from project ID — stable regardless of array order or new projects
+function projectColor(id: string): string {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
+  }
+  return PROJECT_COLORS[hash % PROJECT_COLORS.length];
+}
+
 function toIso(ts: Timestamp) {
   return ts.toDate().toISOString();
 }
@@ -33,18 +42,12 @@ interface Props {
 }
 
 export function CalendarView({ projects, sessions }: Props) {
-  // Stable color map keyed by project id
-  const colorMap = new Map<string, string>();
-  projects.forEach((p, i) => {
-    colorMap.set(p.id, PROJECT_COLORS[i % PROJECT_COLORS.length]);
-  });
-
   // Completed session events — shown as time blocks in week view
   const sessionEvents = sessions
     .filter((s) => s.endTime !== null)
     .map((s) => {
       const project = projects.find((p) => p.id === s.projectId);
-      const color = colorMap.get(s.projectId) ?? PROJECT_COLORS[0];
+      const color = projectColor(s.projectId);
       const hours = s.durationMinutes / 60;
       return {
         id: s.id,
@@ -64,7 +67,7 @@ export function CalendarView({ projects, sessions }: Props) {
   const completionEvents = projects
     .filter((p) => p.status === "completed" && p.completedAt)
     .map((p) => {
-      const color = colorMap.get(p.id) ?? PROJECT_COLORS[0];
+      const color = projectColor(p.id);
       return {
         id: `complete-${p.id}`,
         title: `${p.name}  ·  $${p.quotedAmount.toLocaleString()}`,
@@ -83,11 +86,11 @@ export function CalendarView({ projects, sessions }: Props) {
       {/* Legend */}
       {projects.length > 0 && (
         <div className="flex flex-wrap gap-x-5 gap-y-2 mb-5">
-          {projects.map((p, i) => (
+          {projects.map((p) => (
             <div key={p.id} className="flex items-center gap-1.5">
               <div
                 className="h-2.5 w-2.5 rounded-full shrink-0"
-                style={{ backgroundColor: PROJECT_COLORS[i % PROJECT_COLORS.length] }}
+                style={{ backgroundColor: projectColor(p.id) }}
               />
               <span className="text-sm text-muted-foreground">{p.name}</span>
             </div>

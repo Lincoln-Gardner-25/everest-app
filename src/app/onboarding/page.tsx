@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { db } from "@/lib/firebase";
-import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,6 +25,16 @@ export default function OnboardingPage() {
   const { user } = useAuth();
   const router = useRouter();
   const [step, setStep] = useState(1);
+
+  // Guard: redirect already-onboarded users to dashboard
+  useEffect(() => {
+    if (!user) return;
+    getDoc(doc(db, "users", user.uid)).then((snap) => {
+      if (snap.exists() && snap.data().onboardingComplete) {
+        router.replace("/dashboard");
+      }
+    });
+  }, [user, router]);
   const [monthlyGoal, setMonthlyGoal] = useState("");
   const [targetRate, setTargetRate] = useState("");
   const [specialties, setSpecialties] = useState<string[]>([]);

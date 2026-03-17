@@ -5,6 +5,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { subscribeToProjects, type Project } from "@/lib/projects";
 import { subscribeToUserSessions, type Session } from "@/lib/sessions";
+import { AlertCircle } from "lucide-react";
 
 // Dynamically imported to avoid SSR issues with FullCalendar's browser APIs
 const CalendarView = dynamic(
@@ -21,15 +22,30 @@ export default function CalendarPage() {
   const { user } = useAuth();
   const [projects, setProjects] = useState<Project[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [dataError, setDataError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user) return;
-    return subscribeToProjects(user.uid, setProjects);
+    return subscribeToProjects(user.uid, setProjects, (err) => {
+      console.error("subscribeToProjects error:", err);
+      setDataError(
+        err.message.includes("index")
+          ? "A Firestore index is missing. Check the browser console for a link to create it."
+          : `Failed to load projects: ${err.message}`
+      );
+    });
   }, [user]);
 
   useEffect(() => {
     if (!user) return;
-    return subscribeToUserSessions(user.uid, setSessions);
+    return subscribeToUserSessions(user.uid, setSessions, (err) => {
+      console.error("subscribeToUserSessions error:", err);
+      setDataError(
+        err.message.includes("index")
+          ? "A Firestore index is missing. Check the browser console for a link to create it."
+          : `Failed to load sessions: ${err.message}`
+      );
+    });
   }, [user]);
 
   const completedSessions = sessions.filter((s) => s.endTime !== null);
@@ -68,6 +84,13 @@ export default function CalendarPage() {
           </div>
         )}
       </div>
+
+      {dataError && (
+        <div className="flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 mb-4">
+          <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+          <p className="text-sm text-destructive">{dataError}</p>
+        </div>
+      )}
 
       <CalendarView projects={projects} sessions={sessions} />
     </div>
