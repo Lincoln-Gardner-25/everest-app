@@ -121,3 +121,4 @@ sessions/{sessionId}
 - To deploy updates: `git add <files> && git commit -m "message" && git push` — Vercel auto-deploys from `main` on every push
 - GitHub repo: https://github.com/Lincoln-Gardner-25/everest-app
 - Vercel project: https://vercel.com/lincoln-gardners-projects/everest-app
+- **Pre-commit hook** at `.git/hooks/pre-commit` — calls Claude API (`claude-haiku-4-5-20251001`) on every commit to auto-update the "What's Built" / "What Still Needs Doing" / "Key Files" sections. Requires `ANTHROPIC_API_KEY` in shell env; skips gracefully if not set. To enable: `echo 'export ANTHROPIC_API_KEY="sk-ant-..."' >> ~/.zshrc && source ~/.zshrc`

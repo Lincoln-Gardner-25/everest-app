@@ -8,11 +8,13 @@ import {
   updateProject,
   completeProject,
   deleteProject,
+  createHistoricalProject,
   type Project,
   type ProjectInput,
 } from "@/lib/projects";
 import { ProjectFormDialog } from "@/components/projects/ProjectFormDialog";
 import { ProjectReviewDialog } from "@/components/projects/ProjectReviewDialog";
+import { PastProjectDialog } from "@/components/projects/PastProjectDialog";
 import { Button } from "@/components/ui/button";
 import {
   Plus,
@@ -54,6 +56,7 @@ export default function ProjectsPage() {
   const { user } = useAuth();
   const [projects, setProjects] = useState<Project[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [pastDialogOpen, setPastDialogOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
   const [reviewProject, setReviewProject] = useState<Project | null>(null);
@@ -71,6 +74,11 @@ export default function ProjectsPage() {
   async function handleCreate(data: ProjectInput) {
     if (!user) return;
     await createProject(user.uid, data);
+  }
+
+  async function handleLogPast(data: Parameters<typeof createHistoricalProject>[1]) {
+    if (!user) return;
+    await createHistoricalProject(user.uid, data);
   }
 
   async function handleEdit(data: ProjectInput) {
@@ -128,10 +136,16 @@ export default function ProjectsPage() {
             {active.length} active · {completed.length} completed
           </p>
         </div>
-        <Button onClick={() => setDialogOpen(true)}>
-          <Plus className="h-4 w-4 mr-2" />
-          New project
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => setPastDialogOpen(true)}>
+            <Clock className="h-4 w-4 mr-2" />
+            Log past project
+          </Button>
+          <Button onClick={() => setDialogOpen(true)}>
+            <Plus className="h-4 w-4 mr-2" />
+            New project
+          </Button>
+        </div>
       </div>
 
       {deleteError && (
@@ -282,6 +296,12 @@ export default function ProjectsPage() {
         onClose={closeDialog}
         onSubmit={editingProject ? handleEdit : handleCreate}
         project={editingProject}
+      />
+
+      <PastProjectDialog
+        open={pastDialogOpen}
+        onClose={() => setPastDialogOpen(false)}
+        onSubmit={handleLogPast}
       />
 
       <ProjectReviewDialog

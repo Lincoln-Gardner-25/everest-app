@@ -7,6 +7,7 @@ import {
   FolderOpen,
   Calendar,
   Timer,
+  Target,
   Settings,
   Mountain,
   LogOut,
@@ -30,6 +31,7 @@ const navItems = [
   { href: "/projects", label: "Projects", icon: FolderOpen },
   { href: "/timer", label: "Timer", icon: Timer },
   { href: "/calendar", label: "Calendar", icon: Calendar },
+  { href: "/goals", label: "Goals", icon: Target },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

@@ -177,11 +177,17 @@ export function ProjectFormDialog({ open, onClose, onSubmit, project }: Props) {
                       <div className="relative">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">$</span>
                         <Input
-                          type="number"
-                          min={0}
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="1500"
                           className="pl-6"
-                          value={field.value}
-                          onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                          value={field.value === 0 ? "" : field.value}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            if (v === "" || /^\d*\.?\d*$/.test(v)) {
+                              field.onChange(v === "" ? 0 : parseFloat(v) || 0);
+                            }
+                          }}
                         />
                       </div>
                     </FormControl>
@@ -197,12 +203,16 @@ export function ProjectFormDialog({ open, onClose, onSubmit, project }: Props) {
                     <FormLabel>Estimated hours</FormLabel>
                     <FormControl>
                       <Input
-                        type="number"
-                        min={0}
-                        step={0.5}
+                        type="text"
+                        inputMode="decimal"
                         placeholder="8"
-                        value={field.value}
-                        onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                        value={field.value === 0 ? "" : field.value}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v === "" || /^\d*\.?\d*$/.test(v)) {
+                            field.onChange(v === "" ? 0 : parseFloat(v) || 0);
+                          }
+                        }}
                       />
                     </FormControl>
                     <FormMessage />

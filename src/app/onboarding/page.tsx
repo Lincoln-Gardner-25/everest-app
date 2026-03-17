@@ -42,8 +42,8 @@ export default function OnboardingPage() {
     setSaving(true);
     setError("");
     try {
-      const monthly = parseFloat(monthlyGoal.replace(/,/g, "")) || 0;
-      const rate = parseFloat(targetRate.replace(/,/g, "")) || 0;
+      const monthly = parseFloat(monthlyGoal) || 0;
+      const rate = parseFloat(targetRate) || 0;
       await setDoc(doc(db, "users", user.uid), {
         monthlyGoal: monthly,
         yearlyGoal: monthly * 12,
@@ -116,17 +116,21 @@ export default function OnboardingPage() {
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
                   <Input
                     id="monthly"
-                    type="number"
-                    placeholder="5,000"
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="5000"
                     value={monthlyGoal}
-                    onChange={(e) => setMonthlyGoal(e.target.value)}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v === "" || /^\d*\.?\d*$/.test(v)) setMonthlyGoal(v);
+                    }}
                     className="pl-7"
                   />
                 </div>
                 {monthlyGoal && (
                   <p className="text-sm text-muted-foreground">
                     Yearly goal: <span className="text-foreground font-medium">
-                      ${(parseFloat(monthlyGoal.replace(/,/g, "")) * 12).toLocaleString()}
+                      ${(parseFloat(monthlyGoal) * 12).toLocaleString()}
                     </span>
                   </p>
                 )}
@@ -137,10 +141,14 @@ export default function OnboardingPage() {
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
                   <Input
                     id="rate"
-                    type="number"
+                    type="text"
+                    inputMode="decimal"
                     placeholder="75"
                     value={targetRate}
-                    onChange={(e) => setTargetRate(e.target.value)}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v === "" || /^\d*\.?\d*$/.test(v)) setTargetRate(v);
+                    }}
                     className="pl-7"
                   />
                 </div>
@@ -221,19 +229,19 @@ export default function OnboardingPage() {
               <div className="flex justify-between items-center">
                 <span className="text-sm text-muted-foreground">Monthly goal</span>
                 <span className="font-semibold text-foreground">
-                  ${parseFloat(monthlyGoal.replace(/,/g, "")).toLocaleString()}
+                  ${parseFloat(monthlyGoal).toLocaleString()}
                 </span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-sm text-muted-foreground">Yearly goal</span>
                 <span className="font-semibold text-foreground">
-                  ${(parseFloat(monthlyGoal.replace(/,/g, "")) * 12).toLocaleString()}
+                  ${(parseFloat(monthlyGoal) * 12).toLocaleString()}
                 </span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-sm text-muted-foreground">Target rate</span>
                 <span className="font-semibold text-foreground">
-                  ${parseFloat(targetRate.replace(/,/g, ""))}/hr
+                  ${parseFloat(targetRate)}/hr
                 </span>
               </div>
               <div className="flex justify-between items-start">

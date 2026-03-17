@@ -57,6 +57,33 @@ export async function deleteProject(projectId: string) {
   return deleteDoc(doc(db, "projects", projectId));
 }
 
+export async function createHistoricalProject(
+  userId: string,
+  data: {
+    name: string;
+    clientName: string;
+    projectType: string;
+    quotedAmount: number;
+    actualHours: number;
+    completedAt: Date;
+    notes: string;
+  }
+) {
+  return addDoc(collection(db, "projects"), {
+    userId,
+    name: data.name,
+    clientName: data.clientName,
+    projectType: data.projectType,
+    quotedAmount: data.quotedAmount,
+    estimatedHours: data.actualHours,
+    actualHoursTotal: data.actualHours,
+    status: "completed",
+    notes: data.notes,
+    createdAt: serverTimestamp(),
+    completedAt: Timestamp.fromDate(data.completedAt),
+  });
+}
+
 export function subscribeToProjects(
   userId: string,
   callback: (projects: Project[]) => void
