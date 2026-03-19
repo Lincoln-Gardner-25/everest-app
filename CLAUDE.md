@@ -33,14 +33,15 @@ Named after the NK Rugged Landscape model — helping freelancers find and climb
 | `src/app/(auth)/signup/page.tsx` | Signup → redirects to /onboarding |
 | `src/app/onboarding/page.tsx` | 3-step wizard: goal → specialty → confirm |
 | `src/app/(app)/dashboard/page.tsx` | Dashboard — pace banner + IPH + monthly goal + active projects |
-| `src/app/(app)/projects/page.tsx` | Full projects CRUD — create, list, edit, complete (via review), delete |
+| `src/app/(app)/projects/page.tsx` | Full projects CRUD — create, list, edit, complete (via review), delete; real-time IPH stats + color-coded bars |
 | `src/app/(app)/timer/page.tsx` | Timer — clock in/out, live elapsed, session history |
 | `src/app/(app)/calendar/page.tsx` | Calendar — FullCalendar month/week, sessions + completions |
-| `src/app/(app)/settings/page.tsx` | Settings — edit monthly goal, target rate, specialty |
+| `src/app/(app)/settings/page.tsx` | Settings — password change + password reset email |
 | `src/context/AuthContext.tsx` | Firebase auth context (signIn, signUp, Google, signOut) |
 | `src/lib/firebase.ts` | Firebase client (auth + db exports) |
 | `src/lib/projects.ts` | Firestore CRUD + realtime subscription for projects |
-| `src/lib/sessions.ts` | Firestore CRUD for sessions — clockIn, clockOut, subscriptions |
+| `src/lib/sessions.ts` | Firestore CRUD for sessions — clockIn, clockOut, manual create/edit/delete, subscriptions |
+| `src/components/projects/ProjectSessionsDialog.tsx` | Per-project time entries dialog — stats, manual entry, edit/delete sessions |
 | `src/components/layout/AppSidebar.tsx` | Sidebar nav with sign-out |
 | `src/components/projects/ProjectFormDialog.tsx` | Create/edit project dialog with live IPH preview |
 | `src/components/projects/ProjectReviewDialog.tsx` | Review dialog on project completion — hours + IPH variance + narrative |
@@ -90,12 +91,16 @@ sessions/{sessionId}
 - [x] Projects CRUD — create, list (grouped by status), edit, mark complete, delete
 - [x] Projected IPH shown live in the project form
 - [x] Firestore security rules (`firestore.rules`) + composite index config (`firestore.indexes.json`)
-- [x] `src/lib/sessions.ts` — clockIn, clockOut, subscribeToActiveSession, subscribeToProjectSessions, subscribeToUserSessions (all with onError callbacks)
+- [x] `src/lib/sessions.ts` — clockIn, clockOut, createManualSession, updateSession, deleteSession (batched writes), subscribeToActiveSession, subscribeToProjectSessions, subscribeToUserSessions (all with onError callbacks)
 - [x] Timer — project selector (locks while clocked in), live HH:MM:SS clock, Clock In/Out, session history, serverTimestamp null guard
 - [x] Dashboard KPIs — greeting, pace banner (ahead/on-track/behind/neutral), monthly income progress bar, IPH vs target, active project count
 - [x] Project Review dialog — triggered on "Mark complete"; shows estimated vs actual hours, projected vs actual IPH, color-coded variance, narrative insight
 - [x] Calendar — FullCalendar month/week views, color-coded sessions as time blocks, completed projects as all-day revenue badges, project legend; dynamically imported (ssr: false)
-- [x] Settings — monthly goal + target rate + specialty; uses setDoc merge:true (safe for users who skipped onboarding)
+- [x] Settings — password change (direct) + password reset email (via Firebase); uses setDoc merge:true (safe for users who skipped onboarding)
+- [x] Manual time entries — ProjectSessionsDialog with date picker, hours input, quick-hour presets, batch entry, live IPH preview, edit/delete existing sessions
+- [x] Real-time project stats — active project cards show actual hours logged + live IPH (not just estimates)
+- [x] IPH color coding — project card accent bars: green (above projected IPH), amber (between target and projected), red (below target hourly rate); uses live `targetHourlyRate` from Firestore
+- [x] Clickable project cards — click anywhere on a card to open time entries dialog
 - [x] `firebase.json` for CLI deployments
 - [x] Projects delete error handling — try/catch in `handleDelete` with AlertCircle error banner; permission-specific error message
 - [x] GitHub repo created and all code pushed — https://github.com/Lincoln-Gardner-25/everest-app
@@ -109,7 +114,7 @@ sessions/{sessionId}
 ## Important Notes
 - All APIs/services are $0 — Firebase Spark (free tier), Vercel Hobby (free)
 - Do NOT use Firebase Cloud Functions — logic stays in Next.js API routes/Server Actions (Cloud Functions requires paid plan)
-- `actualHoursTotal` on projects is updated atomically via Firestore `increment()` in `clockOut` — never recomputed from scratch
+- `actualHoursTotal` on projects is updated atomically via Firestore `increment()` in `clockOut`, `createManualSession`, `updateSession`, and `deleteSession` — never recomputed from scratch. Manual session CRUD uses `writeBatch` for atomic multi-doc updates
 - `serverTimestamp()` in `clockIn` resolves asynchronously — the first `onSnapshot` fires with `startTime: null`. Always guard with `isValidTimestamp()` before calling `.toMillis()`. See timer page for the pattern.
 - Settings uses `setDoc` with `{ merge: true }` — safe whether or not the user doc exists (covers Google sign-in users who skipped onboarding)
 - Use `subscribeToProjects` / `subscribeToUserSessions` patterns from their respective lib files for all realtime listeners

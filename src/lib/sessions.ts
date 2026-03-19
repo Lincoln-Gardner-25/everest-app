@@ -10,6 +10,7 @@ import {
   serverTimestamp,
   Timestamp,
   increment,
+  writeBatch,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
@@ -50,6 +51,74 @@ export async function clockOut(
   await updateDoc(doc(db, "projects", projectId), {
     actualHoursTotal: increment(durationMinutes / 60),
   });
+}
+
+export async function createManualSession(
+  userId: string,
+  projectId: string,
+  startTime: Date,
+  endTime: Date,
+  notes: string
+) {
+  const startTs = Timestamp.fromDate(startTime);
+  const endTs = Timestamp.fromDate(endTime);
+  const durationMinutes = (endTime.getTime() - startTime.getTime()) / 60000;
+
+  const sessionRef = doc(collection(db, "sessions"));
+  const batch = writeBatch(db);
+  batch.set(sessionRef, {
+    userId,
+    projectId,
+    startTime: startTs,
+    endTime: endTs,
+    durationMinutes,
+    notes,
+  });
+  batch.update(doc(db, "projects", projectId), {
+    actualHoursTotal: increment(durationMinutes / 60),
+  });
+  return batch.commit();
+}
+
+export async function updateSession(
+  sessionId: string,
+  projectId: string,
+  oldDurationMinutes: number,
+  startTime: Date,
+  endTime: Date,
+  notes: string
+) {
+  const startTs = Timestamp.fromDate(startTime);
+  const endTs = Timestamp.fromDate(endTime);
+  const newDurationMinutes = (endTime.getTime() - startTime.getTime()) / 60000;
+  const delta = newDurationMinutes - oldDurationMinutes;
+
+  const batch = writeBatch(db);
+  batch.update(doc(db, "sessions", sessionId), {
+    startTime: startTs,
+    endTime: endTs,
+    durationMinutes: newDurationMinutes,
+    notes,
+  });
+  if (delta !== 0) {
+    batch.update(doc(db, "projects", projectId), {
+      actualHoursTotal: increment(delta / 60),
+    });
+  }
+  return batch.commit();
+}
+
+export async function deleteSession(
+  sessionId: string,
+  projectId: string,
+  durationMinutes: number
+) {
+  const batch = writeBatch(db);
+  batch.delete(doc(db, "sessions", sessionId));
+  batch.update(doc(db, "projects", projectId), {
+    actualHoursTotal: increment(-durationMinutes / 60),
+  });
+  return batch.commit();
 }
 
 export function subscribeToActiveSession(

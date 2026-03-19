@@ -5,13 +5,14 @@ import {
   EmailAuthProvider,
   reauthenticateWithCredential,
   updatePassword,
+  sendPasswordResetEmail,
 } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { CheckCircle2, KeyRound } from "lucide-react";
+import { CheckCircle2, KeyRound, Mail } from "lucide-react";
 
 export default function SettingsPage() {
   const { user } = useAuth();
@@ -22,6 +23,9 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
+  const [resetSending, setResetSending] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
+  const [resetError, setResetError] = useState("");
 
   // Check if the user signed in with email/password (not Google)
   const hasPasswordProvider = user?.providerData.some(
@@ -72,6 +76,22 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleSendResetEmail() {
+    if (!user?.email || resetSending) return;
+    setResetError("");
+    setResetSent(false);
+    setResetSending(true);
+    try {
+      await sendPasswordResetEmail(auth, user.email);
+      setResetSent(true);
+      setTimeout(() => setResetSent(false), 5000);
+    } catch (err) {
+      setResetError(err instanceof Error ? err.message : "Failed to send reset email.");
+    } finally {
+      setResetSending(false);
+    }
+  }
+
   return (
     <div>
       {/* Header */}
@@ -99,55 +119,83 @@ export default function SettingsPage() {
             </p>
           ) : (
             <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="current">Current password</Label>
-                <Input
-                  id="current"
-                  type="password"
-                  placeholder="••••••••"
-                  value={currentPassword}
-                  onChange={(e) => setCurrentPassword(e.target.value)}
-                />
-              </div>
+              <p className="text-sm text-muted-foreground">
+                We&apos;ll send a password reset link to <span className="font-medium text-foreground">{user?.email}</span>.
+              </p>
 
-              <div className="space-y-2">
-                <Label htmlFor="new">New password</Label>
-                <Input
-                  id="new"
-                  type="password"
-                  placeholder="••••••••"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                />
-              </div>
+              <Button
+                onClick={handleSendResetEmail}
+                disabled={resetSending}
+                variant="outline"
+                className="w-full"
+              >
+                <Mail className="h-4 w-4 mr-2" />
+                {resetSending ? "Sending..." : "Send password reset email"}
+              </Button>
 
-              <div className="space-y-2">
-                <Label htmlFor="confirm">Confirm new password</Label>
-                <Input
-                  id="confirm"
-                  type="password"
-                  placeholder="••••••••"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                />
-              </div>
-
-              {error && <p className="text-sm text-destructive">{error}</p>}
-
-              {saved && (
+              {resetSent && (
                 <span className="flex items-center gap-1.5 text-sm font-medium text-green-700">
                   <CheckCircle2 className="h-4 w-4" />
-                  Password updated
+                  Reset email sent — check your inbox.
                 </span>
               )}
 
-              <Button
-                onClick={handleChangePassword}
-                disabled={saving}
-                className="w-full"
-              >
-                {saving ? "Updating…" : "Update password"}
-              </Button>
+              {resetError && <p className="text-sm text-destructive">{resetError}</p>}
+
+              <div className="border-t pt-4 mt-2">
+                <p className="text-xs text-muted-foreground mb-3">Or change it directly:</p>
+                <div className="space-y-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="current">Current password</Label>
+                    <Input
+                      id="current"
+                      type="password"
+                      placeholder="••••••••"
+                      value={currentPassword}
+                      onChange={(e) => setCurrentPassword(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="new">New password</Label>
+                    <Input
+                      id="new"
+                      type="password"
+                      placeholder="••••••••"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="confirm">Confirm new password</Label>
+                    <Input
+                      id="confirm"
+                      type="password"
+                      placeholder="••••••••"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                    />
+                  </div>
+
+                  {error && <p className="text-sm text-destructive">{error}</p>}
+
+                  {saved && (
+                    <span className="flex items-center gap-1.5 text-sm font-medium text-green-700">
+                      <CheckCircle2 className="h-4 w-4" />
+                      Password updated
+                    </span>
+                  )}
+
+                  <Button
+                    onClick={handleChangePassword}
+                    disabled={saving}
+                    className="w-full"
+                  >
+                    {saving ? "Updating…" : "Update password"}
+                  </Button>
+                </div>
+              </div>
             </div>
           )}
         </div>

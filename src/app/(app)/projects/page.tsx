@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { doc, onSnapshot } from "firebase/firestore";
+import { db } from "@/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
 import {
   subscribeToProjects,
@@ -15,6 +17,7 @@ import {
 import { ProjectFormDialog } from "@/components/projects/ProjectFormDialog";
 import { ProjectReviewDialog } from "@/components/projects/ProjectReviewDialog";
 import { PastProjectDialog } from "@/components/projects/PastProjectDialog";
+import { ProjectSessionsDialog } from "@/components/projects/ProjectSessionsDialog";
 import { Button } from "@/components/ui/button";
 import {
   Plus,
@@ -25,6 +28,7 @@ import {
   Pencil,
   Trash2,
   AlertCircle,
+  Timer,
 } from "lucide-react";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -40,26 +44,82 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 function formatHours(h: number) {
+  if (h <= 0) return "0h";
   if (h < 1) return `${Math.round(h * 60)}m`;
   return `${h.toFixed(1)}h`;
 }
 
-function IPHBadge({ quoted, hours }: { quoted: number; hours: number }) {
-  if (!hours) return <span className="text-muted-foreground text-sm">—</span>;
-  const iph = quoted / hours;
+/**
+ * Returns a Tailwind color class for the project's left accent bar based on
+ * current IPH vs projected IPH vs target rate:
+ *  - No hours logged      → neutral (primary/30)
+ *  - actualIPH >= projectedIPH → green (better than or on budget)
+ *  - targetRate > 0 && actualIPH < targetRate → red (danger: below goal)
+ *  - Everything else      → amber (below projected, but still above target)
+ */
+function getIPHBarColor(project: Project, targetRate: number): string {
+  const hours = project.actualHoursTotal;
+  if (!hours || hours < 0.001) return "bg-primary/30";
+
+  const actualIPH = project.quotedAmount / hours;
+  const projectedIPH =
+    project.estimatedHours > 0 ? project.quotedAmount / project.estimatedHours : 0;
+
+  if (projectedIPH > 0 && actualIPH >= projectedIPH) return "bg-green-500";
+  if (targetRate > 0 && actualIPH < targetRate) return "bg-red-500";
+  return "bg-amber-400";
+}
+
+function IPHBadge({
+  project,
+  targetRate,
+}: {
+  project: Project;
+  targetRate: number;
+}) {
+  const hours = project.actualHoursTotal;
+  const hasActual = hours && hours > 0.001;
+  const displayHours = hasActual ? hours : project.estimatedHours;
+
+  if (!displayHours)
+    return <span className="text-muted-foreground text-sm">—</span>;
+
+  const iph = project.quotedAmount / displayHours;
+
+  // Color the IPH text to match the bar color
+  let textColor = "text-foreground";
+  if (hasActual) {
+    const projectedIPH =
+      project.estimatedHours > 0
+        ? project.quotedAmount / project.estimatedHours
+        : 0;
+    if (projectedIPH > 0 && iph >= projectedIPH) textColor = "text-green-600";
+    else if (targetRate > 0 && iph < targetRate) textColor = "text-red-600";
+    else textColor = "text-amber-600";
+  }
+
   return (
-    <span className="text-sm font-semibold text-foreground">${iph.toFixed(0)}/hr</span>
+    <div className="text-right">
+      <span className={`text-sm font-semibold ${textColor}`}>
+        ${iph.toFixed(0)}/hr
+      </span>
+      {!hasActual && (
+        <p className="text-xs text-muted-foreground">projected</p>
+      )}
+    </div>
   );
 }
 
 export default function ProjectsPage() {
   const { user } = useAuth();
   const [projects, setProjects] = useState<Project[]>([]);
+  const [targetRate, setTargetRate] = useState(0);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [pastDialogOpen, setPastDialogOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
   const [reviewProject, setReviewProject] = useState<Project | null>(null);
+  const [sessionsProjectId, setSessionsProjectId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -74,6 +134,22 @@ export default function ProjectsPage() {
     });
   }, [user]);
 
+  // Load targetHourlyRate for IPH color coding
+  useEffect(() => {
+    if (!user) return;
+    return onSnapshot(
+      doc(db, "users", user.uid),
+      (snap) => {
+        if (snap.exists()) {
+          setTargetRate(snap.data().targetHourlyRate ?? 0);
+        }
+      },
+      (err) => {
+        console.error("User profile subscription error:", err);
+      }
+    );
+  }, [user]);
+
   const active = projects.filter((p) => p.status === "active");
   const review = projects.filter((p) => p.status === "review");
   const completed = projects.filter((p) => p.status === "completed");
@@ -83,7 +159,9 @@ export default function ProjectsPage() {
     await createProject(user.uid, data);
   }
 
-  async function handleLogPast(data: Parameters<typeof createHistoricalProject>[1]) {
+  async function handleLogPast(
+    data: Parameters<typeof createHistoricalProject>[1]
+  ) {
     if (!user) return;
     await createHistoricalProject(user.uid, data);
   }
@@ -124,6 +202,11 @@ export default function ProjectsPage() {
     setMenuOpen(null);
   }
 
+  function openSessions(project: Project) {
+    setSessionsProjectId(project.id);
+    setMenuOpen(null);
+  }
+
   function closeDialog() {
     setDialogOpen(false);
     setEditingProject(null);
@@ -146,7 +229,7 @@ export default function ProjectsPage() {
         <div className="flex items-center gap-2">
           <Button variant="outline" onClick={() => setPastDialogOpen(true)}>
             <Clock className="h-4 w-4 mr-2" />
-            Log past project
+            Add a past project
           </Button>
           <Button onClick={() => setDialogOpen(true)}>
             <Plus className="h-4 w-4 mr-2" />
@@ -196,101 +279,123 @@ export default function ProjectsPage() {
                     {label}
                   </h2>
                   <div className="space-y-3">
-                    {items.map((project) => (
-                      <div
-                        key={project.id}
-                        className="relative rounded-xl border bg-card p-5 flex items-center gap-4 hover:shadow-sm transition-shadow"
-                      >
-                        <div className="w-1 self-stretch rounded-full bg-primary/30 shrink-0" />
+                    {items.map((project) => {
+                      const barColor = getIPHBarColor(project, targetRate);
+                      const hasHours =
+                        project.actualHoursTotal &&
+                        project.actualHoursTotal > 0.001;
 
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-0.5">
-                            <span className="font-semibold text-foreground truncate">
-                              {project.name}
-                            </span>
-                            <span
-                              className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[project.status]}`}
-                            >
-                              {STATUS_LABELS[project.status]}
-                            </span>
-                          </div>
-                          <p className="text-sm text-muted-foreground truncate">
-                            {project.clientName} · {project.projectType}
-                          </p>
-                        </div>
+                      return (
+                        <div
+                          key={project.id}
+                          onClick={() => openSessions(project)}
+                          className="relative rounded-xl border bg-card p-5 flex items-center gap-4 hover:shadow-sm transition-shadow cursor-pointer"
+                        >
+                          <div
+                            className={`w-1 self-stretch rounded-full shrink-0 ${barColor} transition-colors duration-300`}
+                          />
 
-                        <div className="hidden sm:flex items-center gap-6 shrink-0">
-                          <div className="text-right">
-                            <p className="text-xs text-muted-foreground mb-0.5">Quoted</p>
-                            <p className="text-sm font-semibold">
-                              ${project.quotedAmount.toLocaleString()}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-0.5">
+                              <span className="font-semibold text-foreground truncate">
+                                {project.name}
+                              </span>
+                              <span
+                                className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[project.status]}`}
+                              >
+                                {STATUS_LABELS[project.status]}
+                              </span>
+                            </div>
+                            <p className="text-sm text-muted-foreground truncate">
+                              {project.clientName} · {project.projectType}
                             </p>
                           </div>
-                          <div className="text-right">
-                            <p className="text-xs text-muted-foreground mb-0.5">
-                              {project.status === "completed" ? "Actual" : "Est."}
-                            </p>
-                            <div className="flex items-center gap-1 justify-end">
-                              <Clock className="h-3 w-3 text-muted-foreground" />
+
+                          <div className="hidden sm:flex items-center gap-6 shrink-0">
+                            <div className="text-right">
+                              <p className="text-xs text-muted-foreground mb-0.5">
+                                Quoted
+                              </p>
                               <p className="text-sm font-semibold">
-                                {project.status === "completed"
-                                  ? formatHours(project.actualHoursTotal)
-                                  : formatHours(project.estimatedHours)}
+                                ${project.quotedAmount.toLocaleString()}
                               </p>
                             </div>
-                          </div>
-                          <div className="text-right w-16">
-                            <p className="text-xs text-muted-foreground mb-0.5">IPH</p>
-                            <IPHBadge
-                              quoted={project.quotedAmount}
-                              hours={
-                                project.status === "completed"
-                                  ? project.actualHoursTotal || project.estimatedHours
-                                  : project.estimatedHours
-                              }
-                            />
-                          </div>
-                        </div>
-
-                        <div className="relative shrink-0">
-                          <button
-                            onClick={() =>
-                              setMenuOpen(menuOpen === project.id ? null : project.id)
-                            }
-                            className="h-8 w-8 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                          >
-                            <MoreHorizontal className="h-4 w-4" />
-                          </button>
-                          {menuOpen === project.id && (
-                            <div className="absolute right-0 top-9 z-10 w-44 rounded-lg border bg-card shadow-md py-1">
-                              <button
-                                onClick={() => openEdit(project)}
-                                className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors"
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                                Edit
-                              </button>
-                              {project.status !== "completed" && (
-                                <button
-                                  onClick={() => handleComplete(project)}
-                                  className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors text-green-700"
-                                >
-                                  <CheckCircle2 className="h-3.5 w-3.5" />
-                                  Mark complete
-                                </button>
-                              )}
-                              <button
-                                onClick={() => handleDelete(project)}
-                                className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors text-destructive"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                                Delete
-                              </button>
+                            <div className="text-right">
+                              <p className="text-xs text-muted-foreground mb-0.5">
+                                {hasHours ? "Logged" : "Est."}
+                              </p>
+                              <div className="flex items-center gap-1 justify-end">
+                                <Clock className="h-3 w-3 text-muted-foreground" />
+                                <p className="text-sm font-semibold">
+                                  {hasHours
+                                    ? formatHours(project.actualHoursTotal)
+                                    : formatHours(project.estimatedHours)}
+                                </p>
+                              </div>
+                              {hasHours &&
+                                project.estimatedHours > 0 && (
+                                  <p className="text-xs text-muted-foreground text-right">
+                                    of {formatHours(project.estimatedHours)}
+                                  </p>
+                                )}
                             </div>
-                          )}
+                            <div className="text-right w-20">
+                              <p className="text-xs text-muted-foreground mb-0.5">
+                                IPH
+                              </p>
+                              <IPHBadge project={project} targetRate={targetRate} />
+                            </div>
+                          </div>
+
+                          <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              onClick={() =>
+                                setMenuOpen(
+                                  menuOpen === project.id ? null : project.id
+                                )
+                              }
+                              className="h-8 w-8 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                            >
+                              <MoreHorizontal className="h-4 w-4" />
+                            </button>
+                            {menuOpen === project.id && (
+                              <div className="absolute right-0 top-9 z-10 w-48 rounded-lg border bg-card shadow-md py-1">
+                                <button
+                                  onClick={() => openSessions(project)}
+                                  className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors"
+                                >
+                                  <Timer className="h-3.5 w-3.5" />
+                                  Time entries
+                                </button>
+                                <button
+                                  onClick={() => openEdit(project)}
+                                  className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                  Edit
+                                </button>
+                                {project.status !== "completed" && (
+                                  <button
+                                    onClick={() => handleComplete(project)}
+                                    className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors text-green-700"
+                                  >
+                                    <CheckCircle2 className="h-3.5 w-3.5" />
+                                    Mark complete
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => handleDelete(project)}
+                                  className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors text-destructive"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                  Delete
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )
@@ -316,6 +421,13 @@ export default function ProjectsPage() {
         open={!!reviewProject}
         onClose={() => setReviewProject(null)}
         onConfirm={handleConfirmComplete}
+      />
+
+      <ProjectSessionsDialog
+        open={!!sessionsProjectId}
+        onClose={() => setSessionsProjectId(null)}
+        project={projects.find((pr) => pr.id === sessionsProjectId) ?? null}
+        userId={user?.uid ?? ""}
       />
 
       {menuOpen && (
