@@ -1,11 +1,14 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
 import { subscribeToProjects, type Project } from "@/lib/projects";
-import { TrendingUp, TrendingDown, Minus, Clock, DollarSign, Briefcase, AlertCircle } from "lucide-react";
+import { searchContractEmails, getImportedEmailIds, type GmailContractEmail } from "@/lib/gmail";
+import { GmailImportWizard } from "@/components/projects/GmailImportWizard";
+import { Button } from "@/components/ui/button";
+import { TrendingUp, TrendingDown, Minus, Clock, DollarSign, Briefcase, AlertCircle, Mail, Loader2 } from "lucide-react";
 
 interface UserProfile {
   monthlyGoal: number;
@@ -71,10 +74,60 @@ const PACE_CONFIG: Record<
 };
 
 export default function DashboardPage() {
-  const { user } = useAuth();
+  const { user, gmailAccessToken, connectGmail } = useAuth();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsError, setProjectsError] = useState<string | null>(null);
+
+  // Gmail import state
+  const [contractEmails, setContractEmails] = useState<GmailContractEmail[]>([]);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [gmailScanning, setGmailScanning] = useState(false);
+  const [gmailError, setGmailError] = useState<string | null>(null);
+  const [hasAutoScanned, setHasAutoScanned] = useState(false);
+
+  const scanGmail = useCallback(async (token: string) => {
+    setGmailScanning(true);
+    setGmailError(null);
+    try {
+      const emails = await searchContractEmails(token);
+      // Filter out already-imported emails
+      const imported = getImportedEmailIds();
+      const newEmails = emails.filter((e) => !imported.has(e.id));
+      setContractEmails(newEmails);
+      if (newEmails.length > 0) {
+        setWizardOpen(true);
+      }
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message === "GMAIL_AUTH_EXPIRED") {
+        setGmailError("Gmail access expired. Click below to reconnect.");
+      } else {
+        setGmailError("Could not scan Gmail. Try reconnecting.");
+      }
+    } finally {
+      setGmailScanning(false);
+    }
+  }, []);
+
+  // Auto-scan Gmail on first load when token is available
+  useEffect(() => {
+    if (gmailAccessToken && !hasAutoScanned) {
+      setHasAutoScanned(true);
+      scanGmail(gmailAccessToken);
+    }
+  }, [gmailAccessToken, hasAutoScanned, scanGmail]);
+
+  async function handleConnectGmail() {
+    setGmailError(null);
+    try {
+      const token = await connectGmail();
+      if (token) {
+        await scanGmail(token);
+      }
+    } catch {
+      setGmailError("Gmail connection was cancelled or failed.");
+    }
+  }
 
   // Realtime user profile (monthly goal may change in Settings)
   useEffect(() => {
@@ -185,6 +238,81 @@ export default function DashboardPage() {
           </div>
         )}
       </div>
+
+      {/* Gmail import section */}
+      <div className="rounded-2xl border bg-card p-5 mb-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
+              <Mail className="h-5 w-5 text-primary" />
+            </div>
+            <div>
+              <p className="font-semibold text-foreground text-sm">Gmail Contract Import</p>
+              <p className="text-xs text-muted-foreground">
+                {gmailAccessToken
+                  ? contractEmails.length > 0
+                    ? `${contractEmails.length} new contract${contractEmails.length !== 1 ? "s" : ""} found`
+                    : "No new contracts detected"
+                  : "Connect Gmail to auto-detect signed contracts"}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {contractEmails.length > 0 && !wizardOpen && (
+              <Button size="sm" onClick={() => setWizardOpen(true)}>
+                Review contracts
+              </Button>
+            )}
+            {gmailAccessToken ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => scanGmail(gmailAccessToken)}
+                disabled={gmailScanning}
+              >
+                {gmailScanning ? (
+                  <>
+                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                    Scanning...
+                  </>
+                ) : (
+                  "Rescan"
+                )}
+              </Button>
+            ) : (
+              <Button size="sm" onClick={handleConnectGmail} disabled={gmailScanning}>
+                {gmailScanning ? (
+                  <>
+                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                    Connecting...
+                  </>
+                ) : (
+                  "Connect Gmail"
+                )}
+              </Button>
+            )}
+          </div>
+        </div>
+        {gmailError && (
+          <div className="mt-3 flex items-start gap-2 text-xs text-amber-700 bg-amber-50 rounded-lg p-2">
+            <AlertCircle className="h-3 w-3 shrink-0 mt-0.5" />
+            <span>{gmailError}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Gmail import wizard */}
+      {user && (
+        <GmailImportWizard
+          open={wizardOpen}
+          onClose={() => {
+            setWizardOpen(false);
+            setContractEmails([]);
+          }}
+          emails={contractEmails}
+          userId={user.uid}
+        />
+      )}
 
       {/* KPI cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
