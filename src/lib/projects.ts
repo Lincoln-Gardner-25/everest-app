@@ -29,6 +29,8 @@ export interface Project {
   notes: string;
   createdAt: Timestamp;
   completedAt: Timestamp | null;
+  gmailMessageId?: string;
+  gmailThreadId?: string;
 }
 
 export type ProjectInput = Omit<Project, "id" | "userId" | "actualHoursTotal" | "createdAt" | "completedAt">;

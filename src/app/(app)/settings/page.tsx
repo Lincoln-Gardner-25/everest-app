@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   EmailAuthProvider,
   reauthenticateWithCredential,
@@ -9,6 +9,7 @@ import {
 } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
+import { isGmailScanEnabled, setGmailScanEnabled } from "@/lib/gmail";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,10 +28,29 @@ export default function SettingsPage() {
   const [resetSent, setResetSent] = useState(false);
   const [resetError, setResetError] = useState("");
 
-  // Check if the user signed in with email/password (not Google)
+  // Gmail scanning toggle
+  const [gmailEnabled, setGmailEnabled] = useState(true);
+  const [gmailToggleLoading, setGmailToggleLoading] = useState(true);
+
   const hasPasswordProvider = user?.providerData.some(
     (p) => p.providerId === "password"
   );
+
+  // Load Gmail scan preference
+  useEffect(() => {
+    if (!user) return;
+    isGmailScanEnabled(user.uid).then((enabled) => {
+      setGmailEnabled(enabled);
+      setGmailToggleLoading(false);
+    });
+  }, [user]);
+
+  async function handleToggleGmail() {
+    if (!user) return;
+    const newValue = !gmailEnabled;
+    setGmailEnabled(newValue);
+    await setGmailScanEnabled(user.uid, newValue);
+  }
 
   async function handleChangePassword() {
     setError("");
@@ -52,7 +72,6 @@ export default function SettingsPage() {
 
     setSaving(true);
     try {
-      // Firebase requires re-authentication before sensitive operations
       const credential = EmailAuthProvider.credential(user.email, currentPassword);
       await reauthenticateWithCredential(user, credential);
       await updatePassword(user, newPassword);
@@ -106,7 +125,37 @@ export default function SettingsPage() {
       </div>
 
       <div className="max-w-lg space-y-6">
-        {/* Account card */}
+        {/* Gmail scanning toggle */}
+        <div className="rounded-2xl border bg-card p-6 space-y-4">
+          <div className="flex items-center gap-2">
+            <Mail className="h-4 w-4 text-muted-foreground" />
+            <h2 className="font-semibold text-foreground">Contract Scanner</h2>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Automatically scan your Gmail for signed contracts when you open the dashboard.
+            Looks for emails matching your document signing service.
+          </p>
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-foreground">
+              {gmailEnabled ? "Enabled" : "Disabled"}
+            </span>
+            <button
+              onClick={handleToggleGmail}
+              disabled={gmailToggleLoading}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                gmailEnabled ? "bg-primary" : "bg-muted"
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  gmailEnabled ? "translate-x-6" : "translate-x-1"
+                }`}
+              />
+            </button>
+          </div>
+        </div>
+
+        {/* Password card */}
         <div className="rounded-2xl border bg-card p-6 space-y-4">
           <div className="flex items-center gap-2">
             <KeyRound className="h-4 w-4 text-muted-foreground" />
@@ -192,7 +241,7 @@ export default function SettingsPage() {
                     disabled={saving}
                     className="w-full"
                   >
-                    {saving ? "Updating…" : "Update password"}
+                    {saving ? "Updating\u2026" : "Update password"}
                   </Button>
                 </div>
               </div>

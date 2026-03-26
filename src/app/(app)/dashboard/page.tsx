@@ -5,10 +5,25 @@ import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
 import { subscribeToProjects, type Project } from "@/lib/projects";
-import { searchContractEmails, getImportedEmailIds, type GmailContractEmail } from "@/lib/gmail";
-import { GmailImportWizard } from "@/components/projects/GmailImportWizard";
+import {
+  searchSignedContracts,
+  getImportedEmailIds,
+  isGmailScanEnabled,
+  type GmailContractEmail,
+} from "@/lib/gmail";
+import { GmailImportCards } from "@/components/projects/GmailImportWizard";
 import { Button } from "@/components/ui/button";
-import { TrendingUp, TrendingDown, Minus, Clock, DollarSign, Briefcase, AlertCircle, Mail, Loader2 } from "lucide-react";
+import {
+  TrendingUp,
+  TrendingDown,
+  Minus,
+  Clock,
+  DollarSign,
+  Briefcase,
+  AlertCircle,
+  Mail,
+  Loader2,
+} from "lucide-react";
 
 interface UserProfile {
   monthlyGoal: number;
@@ -18,7 +33,11 @@ interface UserProfile {
 function getMonthMeta() {
   const now = new Date();
   const start = new Date(now.getFullYear(), now.getMonth(), 1);
-  const daysTotal = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const daysTotal = new Date(
+    now.getFullYear(),
+    now.getMonth() + 1,
+    0
+  ).getDate();
   return { startTs: start.getTime(), daysTotal, dayElapsed: now.getDate() };
 }
 
@@ -37,7 +56,14 @@ type Pace = "ahead" | "on-track" | "behind" | "neutral";
 
 const PACE_CONFIG: Record<
   Pace,
-  { label: string; detail: string; iconColor: string; bg: string; border: string; Icon: React.ElementType }
+  {
+    label: string;
+    detail: string;
+    iconColor: string;
+    bg: string;
+    border: string;
+    Icon: React.ElementType;
+  }
 > = {
   ahead: {
     label: "Ahead of pace",
@@ -80,56 +106,68 @@ export default function DashboardPage() {
   const [projectsError, setProjectsError] = useState<string | null>(null);
 
   // Gmail import state
-  const [contractEmails, setContractEmails] = useState<GmailContractEmail[]>([]);
-  const [wizardOpen, setWizardOpen] = useState(false);
+  const [contractEmails, setContractEmails] = useState<GmailContractEmail[]>(
+    []
+  );
   const [gmailScanning, setGmailScanning] = useState(false);
   const [gmailError, setGmailError] = useState<string | null>(null);
   const [hasAutoScanned, setHasAutoScanned] = useState(false);
+  const [scanEnabled, setScanEnabled] = useState(true);
 
-  const scanGmail = useCallback(async (token: string) => {
-    setGmailScanning(true);
-    setGmailError(null);
-    try {
-      const emails = await searchContractEmails(token);
-      // Filter out already-imported emails
-      const imported = getImportedEmailIds();
-      const newEmails = emails.filter((e) => !imported.has(e.id));
-      setContractEmails(newEmails);
-      if (newEmails.length > 0) {
-        setWizardOpen(true);
+  const scanGmail = useCallback(
+    async (token: string, uid: string) => {
+      setGmailScanning(true);
+      setGmailError(null);
+      try {
+        const emails = await searchSignedContracts(token);
+        // Filter out already-imported/dismissed emails
+        const imported = await getImportedEmailIds(uid);
+        const newEmails = emails.filter((e) => !imported.has(e.id));
+        setContractEmails(newEmails);
+      } catch (err: unknown) {
+        if (err instanceof Error && err.message === "GMAIL_AUTH_EXPIRED") {
+          setGmailError("Gmail access expired. Click below to reconnect.");
+        } else {
+          setGmailError("Could not scan Gmail. Try reconnecting.");
+        }
+      } finally {
+        setGmailScanning(false);
       }
-    } catch (err: unknown) {
-      if (err instanceof Error && err.message === "GMAIL_AUTH_EXPIRED") {
-        setGmailError("Gmail access expired. Click below to reconnect.");
-      } else {
-        setGmailError("Could not scan Gmail. Try reconnecting.");
-      }
-    } finally {
-      setGmailScanning(false);
-    }
-  }, []);
+    },
+    []
+  );
 
-  // Auto-scan Gmail on first load when token is available
+  // Auto-scan Gmail on first load when token is available and scanning is enabled
   useEffect(() => {
-    if (gmailAccessToken && !hasAutoScanned) {
+    if (!user || !gmailAccessToken || hasAutoScanned) return;
+
+    async function autoScan() {
+      const enabled = await isGmailScanEnabled(user!.uid);
+      setScanEnabled(enabled);
+      if (!enabled) {
+        setHasAutoScanned(true);
+        return;
+      }
       setHasAutoScanned(true);
-      scanGmail(gmailAccessToken);
+      scanGmail(gmailAccessToken!, user!.uid);
     }
-  }, [gmailAccessToken, hasAutoScanned, scanGmail]);
+
+    autoScan();
+  }, [user, gmailAccessToken, hasAutoScanned, scanGmail]);
 
   async function handleConnectGmail() {
     setGmailError(null);
     try {
       const token = await connectGmail();
-      if (token) {
-        await scanGmail(token);
+      if (token && user) {
+        await scanGmail(token, user.uid);
       }
     } catch {
       setGmailError("Gmail connection was cancelled or failed.");
     }
   }
 
-  // Realtime user profile (monthly goal may change in Settings)
+  // Realtime user profile
   useEffect(() => {
     if (!user) return;
     return onSnapshot(doc(db, "users", user.uid), (snap) => {
@@ -153,37 +191,45 @@ export default function DashboardPage() {
   // ── Derived stats ────────────────────────────────────────────────
   const { startTs, daysTotal, dayElapsed } = getMonthMeta();
 
-  // Income this month = sum of quoted amounts for projects completed this month
   const completedThisMonth = projects.filter((p) => {
     if (!p.completedAt) return false;
     const ts = p.completedAt.toMillis ? p.completedAt.toMillis() : 0;
     return ts >= startTs;
   });
-  const monthlyIncome = completedThisMonth.reduce((sum, p) => sum + p.quotedAmount, 0);
+  const monthlyIncome = completedThisMonth.reduce(
+    (sum, p) => sum + p.quotedAmount,
+    0
+  );
 
   const monthlyGoal = profile?.monthlyGoal ?? 0;
-  const goalPct = monthlyGoal > 0 ? Math.min(monthlyIncome / monthlyGoal, 1) : 0;
+  const goalPct =
+    monthlyGoal > 0 ? Math.min(monthlyIncome / monthlyGoal, 1) : 0;
   const monthPct = dayElapsed / daysTotal;
 
-  // IPH = total earned / total hours across all completed projects with hours
   const completedWithHours = projects.filter(
     (p) => p.status === "completed" && p.actualHoursTotal > 0
   );
-  const totalEarned = completedWithHours.reduce((sum, p) => sum + p.quotedAmount, 0);
-  const totalHours = completedWithHours.reduce((sum, p) => sum + p.actualHoursTotal, 0);
+  const totalEarned = completedWithHours.reduce(
+    (sum, p) => sum + p.quotedAmount,
+    0
+  );
+  const totalHours = completedWithHours.reduce(
+    (sum, p) => sum + p.actualHoursTotal,
+    0
+  );
   const iph = totalHours > 0 ? totalEarned / totalHours : null;
 
   const activeProjects = projects.filter((p) => p.status === "active");
+  const completedProjects = projects.filter((p) => p.status === "completed");
 
-  // Pace
   const pace: Pace =
     monthlyGoal === 0
       ? "neutral"
       : goalPct >= monthPct + 0.05
-      ? "ahead"
-      : goalPct >= monthPct - 0.1
-      ? "on-track"
-      : "behind";
+        ? "ahead"
+        : goalPct >= monthPct - 0.1
+          ? "on-track"
+          : "behind";
 
   const pc = PACE_CONFIG[pace];
 
@@ -219,7 +265,9 @@ export default function DashboardPage() {
       >
         <div
           className="h-10 w-10 rounded-full flex items-center justify-center shrink-0"
-          style={{ backgroundColor: `color-mix(in oklch, ${pc.iconColor} 15%, transparent)` }}
+          style={{
+            backgroundColor: `color-mix(in oklch, ${pc.iconColor} 15%, transparent)`,
+          }}
         >
           <pc.Icon className="h-5 w-5" style={{ color: pc.iconColor }} />
         </div>
@@ -239,35 +287,42 @@ export default function DashboardPage() {
         )}
       </div>
 
-      {/* Gmail import section */}
-      <div className="rounded-2xl border bg-card p-5 mb-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
-              <Mail className="h-5 w-5 text-primary" />
+      {/* Gmail import cards — signed contract imports */}
+      {user && contractEmails.length > 0 && (
+        <GmailImportCards
+          emails={contractEmails}
+          userId={user.uid}
+          completedProjects={completedProjects}
+          onImported={() => setContractEmails([])}
+        />
+      )}
+
+      {/* Gmail connect / status bar (only show if scanning is enabled) */}
+      {scanEnabled && !contractEmails.length && (
+        <div className="rounded-2xl border bg-card p-5 mb-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
+                <Mail className="h-5 w-5 text-primary" />
+              </div>
+              <div>
+                <p className="font-semibold text-foreground text-sm">
+                  Contract Scanner
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {gmailAccessToken
+                    ? "No new signed contracts detected"
+                    : "Connect Gmail to auto-detect signed contracts"}
+                </p>
+              </div>
             </div>
-            <div>
-              <p className="font-semibold text-foreground text-sm">Gmail Contract Import</p>
-              <p className="text-xs text-muted-foreground">
-                {gmailAccessToken
-                  ? contractEmails.length > 0
-                    ? `${contractEmails.length} new contract${contractEmails.length !== 1 ? "s" : ""} found`
-                    : "No new contracts detected"
-                  : "Connect Gmail to auto-detect signed contracts"}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            {contractEmails.length > 0 && !wizardOpen && (
-              <Button size="sm" onClick={() => setWizardOpen(true)}>
-                Review contracts
-              </Button>
-            )}
             {gmailAccessToken ? (
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => scanGmail(gmailAccessToken)}
+                onClick={() =>
+                  user && scanGmail(gmailAccessToken, user.uid)
+                }
                 disabled={gmailScanning}
               >
                 {gmailScanning ? (
@@ -280,7 +335,11 @@ export default function DashboardPage() {
                 )}
               </Button>
             ) : (
-              <Button size="sm" onClick={handleConnectGmail} disabled={gmailScanning}>
+              <Button
+                size="sm"
+                onClick={handleConnectGmail}
+                disabled={gmailScanning}
+              >
                 {gmailScanning ? (
                   <>
                     <Loader2 className="h-3 w-3 mr-1 animate-spin" />
@@ -292,43 +351,34 @@ export default function DashboardPage() {
               </Button>
             )}
           </div>
+          {gmailError && (
+            <div className="mt-3 flex items-start gap-2 text-xs text-amber-700 bg-amber-50 rounded-lg p-2">
+              <AlertCircle className="h-3 w-3 shrink-0 mt-0.5" />
+              <span>{gmailError}</span>
+            </div>
+          )}
         </div>
-        {gmailError && (
-          <div className="mt-3 flex items-start gap-2 text-xs text-amber-700 bg-amber-50 rounded-lg p-2">
-            <AlertCircle className="h-3 w-3 shrink-0 mt-0.5" />
-            <span>{gmailError}</span>
-          </div>
-        )}
-      </div>
-
-      {/* Gmail import wizard */}
-      {user && (
-        <GmailImportWizard
-          open={wizardOpen}
-          onClose={() => {
-            setWizardOpen(false);
-            setContractEmails([]);
-          }}
-          emails={contractEmails}
-          userId={user.uid}
-        />
       )}
 
       {/* KPI cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-
         {/* Monthly goal */}
         <div className="rounded-2xl border bg-card p-6">
           <div className="flex items-center gap-2 mb-4">
             <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
               <DollarSign className="h-4 w-4 text-primary" />
             </div>
-            <p className="text-sm font-medium text-muted-foreground">Monthly Income</p>
+            <p className="text-sm font-medium text-muted-foreground">
+              Monthly Income
+            </p>
           </div>
           <p className="text-2xl font-bold text-foreground">
             {formatCurrency(monthlyIncome)}
             <span className="text-base font-normal text-muted-foreground ml-1">
-              / {monthlyGoal > 0 ? formatCurrency(monthlyGoal) : "no goal set"}
+              /{" "}
+              {monthlyGoal > 0
+                ? formatCurrency(monthlyGoal)
+                : "no goal set"}
             </span>
           </p>
           <div className="mt-3 h-2 w-full rounded-full bg-muted overflow-hidden">
@@ -352,14 +402,21 @@ export default function DashboardPage() {
           <div className="flex items-center gap-2 mb-4">
             <div
               className="h-8 w-8 rounded-lg flex items-center justify-center"
-              style={{ backgroundColor: "oklch(0.73 0.11 192 / 0.15)" }}
+              style={{
+                backgroundColor: "oklch(0.73 0.11 192 / 0.15)",
+              }}
             >
-              <Clock className="h-4 w-4" style={{ color: "oklch(0.73 0.11 192)" }} />
+              <Clock
+                className="h-4 w-4"
+                style={{ color: "oklch(0.73 0.11 192)" }}
+              />
             </div>
-            <p className="text-sm font-medium text-muted-foreground">Income Per Hour</p>
+            <p className="text-sm font-medium text-muted-foreground">
+              Income Per Hour
+            </p>
           </div>
           <p className="text-2xl font-bold text-foreground">
-            {iph !== null ? `$${Math.round(iph)}/hr` : "—"}
+            {iph !== null ? `$${Math.round(iph)}/hr` : "\u2014"}
           </p>
           {iph !== null && profile?.targetHourlyRate ? (
             <p className="text-xs text-muted-foreground mt-2">
@@ -373,7 +430,9 @@ export default function DashboardPage() {
                   fontWeight: 500,
                 }}
               >
-                {iph >= profile.targetHourlyRate ? "above target" : "below target"}
+                {iph >= profile.targetHourlyRate
+                  ? "above target"
+                  : "below target"}
               </span>
             </p>
           ) : (
@@ -391,9 +450,13 @@ export default function DashboardPage() {
             <div className="h-8 w-8 rounded-lg bg-amber-100 flex items-center justify-center">
               <Briefcase className="h-4 w-4 text-amber-600" />
             </div>
-            <p className="text-sm font-medium text-muted-foreground">Active Projects</p>
+            <p className="text-sm font-medium text-muted-foreground">
+              Active Projects
+            </p>
           </div>
-          <p className="text-2xl font-bold text-foreground">{activeProjects.length}</p>
+          <p className="text-2xl font-bold text-foreground">
+            {activeProjects.length}
+          </p>
           <p className="text-xs text-muted-foreground mt-2">
             {activeProjects.length === 0
               ? "No active projects"
@@ -401,7 +464,9 @@ export default function DashboardPage() {
                   .slice(0, 2)
                   .map((p) => p.name)
                   .join(", ") +
-                (activeProjects.length > 2 ? ` +${activeProjects.length - 2} more` : "")}
+                (activeProjects.length > 2
+                  ? ` +${activeProjects.length - 2} more`
+                  : "")}
           </p>
         </div>
       </div>

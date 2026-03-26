@@ -108,8 +108,42 @@ sessions/{sessionId}
 - [x] All 7 Firebase env vars added to Vercel dashboard (`NEXT_PUBLIC_FIREBASE_*`)
 - [x] `.env.local` excluded from git (`.env*` pattern in `.gitignore`); `.claude/` session files also excluded
 
+## Branch: `moneyt` — Gmail Contract Scanner (in progress, not merged)
+This branch adds automatic project creation from signed contracts via Gmail.
+
+### How It Works
+1. User sends a contract to a client via document signing service (sendlink.co)
+2. Client signs → confirmation email arrives with subject: `[Gardner Photo and Film LLC] {Project Name} signed`
+3. On dashboard load, Everest auto-scans Gmail inbox for these emails
+4. Each match becomes a card pre-filled with **Project Name** (from subject) + **Client Name** (from To header)
+5. User fills in **Quoted Amount** + **Estimated Hours**, clicks "Add to Everest" → active project created
+6. Smart estimate hints show averages from similar completed projects
+7. Dismissed/imported emails tracked in Firestore (`users/{uid}.importedGmailIds`) — persists across devices
+8. Settings page has on/off toggle for scanner (default: on, stored in `users/{uid}.gmailScanEnabled`)
+
+### Files Changed on `moneyt`
+| File | What Changed |
+|------|-------------|
+| `src/lib/gmail.ts` | Complete rewrite — searches for `[Gardner Photo and Film LLC] * signed`, metadata-only fetch, Firestore-based tracking, scan toggle helpers |
+| `src/components/projects/GmailImportWizard.tsx` | 4-field cards (name, client, amount, hours), smart estimate hints from past projects, Firestore dismiss tracking |
+| `src/app/(app)/dashboard/page.tsx` | Auto-scan respects settings toggle, passes completed projects for smart hints, renamed to "Contract Scanner" |
+| `src/app/(app)/settings/page.tsx` | Added "Contract Scanner" card with on/off toggle |
+| `src/context/AuthContext.tsx` | No changes needed — already requests `gmail.readonly` scope |
+| `src/lib/projects.ts` | No changes needed — already has `gmailMessageId`/`gmailThreadId` fields |
+
+### What Still Needs Doing on `moneyt`
+- [ ] Live test with real Google sign-in + signed contract email
+- [ ] Merge to `main` and deploy to Vercel
+- [ ] Update Firestore security rules to allow `importedGmailIds` and `gmailScanEnabled` fields
+
+### New Firestore Fields (on `users/{userId}`)
+```
+importedGmailIds: string[]      ← email IDs already imported/dismissed
+gmailScanEnabled: boolean       ← contract scanner toggle (default: true)
+```
+
 ## What Still Needs Doing
-- Nothing — all deployment and configuration tasks are complete. The app is fully live.
+- Merge `moneyt` branch (Gmail contract scanner) to `main` after live testing
 
 ## Important Notes
 - All APIs/services are $0 — Firebase Spark (free tier), Vercel Hobby (free)

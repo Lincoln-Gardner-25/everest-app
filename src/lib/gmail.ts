@@ -1,36 +1,48 @@
 /**
- * Gmail API service — searches for contract/agreement emails
- * and extracts project details for import into Everest.
+ * Gmail API service — scans inbox for signed contract confirmations
+ * from the document signing service and extracts project details.
  *
- * Uses the Gmail REST API directly (no SDK needed).
- * Requires an OAuth access token with gmail.readonly scope.
+ * Trigger: Subject matches "[Gardner Photo and Film LLC] {Project Name} signed"
+ * Extracts: project name (subject), client name (To header)
+ * User fills in: quoted amount + estimated hours
  */
 
+import {
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  arrayUnion,
+} from "firebase/firestore";
+import { db } from "@/lib/firebase";
+
 const GMAIL_API = "https://www.googleapis.com/gmail/v1/users/me";
+
+/** The subject prefix used by the document signing service */
+const SUBJECT_PREFIX = "[Gardner Photo and Film LLC]";
+const SUBJECT_SUFFIX = "signed";
 
 export interface GmailContractEmail {
   id: string;
   threadId: string;
   subject: string;
-  from: string;
+  to: string;
   date: string;
-  snippet: string;
-  bodyPreview: string;
-  // Parsed suggestions (best-effort extraction)
   suggestedClientName: string;
   suggestedProjectName: string;
-  suggestedQuotedAmount: number | null;
-  allAmountsFound: number[];
+  suggestedAmount: number | null;
 }
 
-/** Search Gmail for recent contract/agreement emails */
-export async function searchContractEmails(
+// ── Gmail scanning ──────────────────────────────────────────────────
+
+/** Search inbox for signed contract confirmation emails */
+export async function searchSignedContracts(
   accessToken: string,
-  maxResults = 10
+  maxResults = 20
 ): Promise<GmailContractEmail[]> {
-  // Search for emails containing contract-related keywords from the last 30 days
+  // Match: subject contains "[Gardner Photo and Film LLC]" AND "signed"
   const query = encodeURIComponent(
-    "(subject:contract OR subject:agreement OR subject:signed OR subject:proposal OR subject:\"scope of work\" OR subject:SOW OR subject:engagement) newer_than:30d"
+    `subject:"${SUBJECT_PREFIX}" subject:${SUBJECT_SUFFIX} newer_than:90d`
   );
 
   const listRes = await fetch(
@@ -44,25 +56,40 @@ export async function searchContractEmails(
   }
 
   const listData = await listRes.json();
-  const messages: { id: string; threadId: string }[] = listData.messages || [];
+  const messages: { id: string; threadId: string }[] =
+    listData.messages || [];
 
   if (messages.length === 0) return [];
 
-  // Fetch details for each message in parallel
   const details = await Promise.all(
     messages.map((msg) => fetchMessageDetails(accessToken, msg.id))
   );
 
-  return details.filter((d): d is GmailContractEmail => d !== null);
+  const valid = details.filter((d): d is GmailContractEmail => d !== null);
+
+  // Fetch thread bodies in parallel to extract dollar amounts
+  await Promise.all(
+    valid.map(async (email) => {
+      try {
+        email.suggestedAmount = await extractAmountFromThread(
+          accessToken,
+          email.threadId
+        );
+      } catch {
+        // Non-critical — leave as null, user can enter manually
+      }
+    })
+  );
+
+  return valid;
 }
 
 async function fetchMessageDetails(
   accessToken: string,
   messageId: string
 ): Promise<GmailContractEmail | null> {
-  // Fetch full message to get the body content for amount extraction
   const res = await fetch(
-    `${GMAIL_API}/messages/${messageId}?format=full`,
+    `${GMAIL_API}/messages/${messageId}?format=metadata&metadataHeaders=Subject&metadataHeaders=To&metadataHeaders=From&metadataHeaders=Date`,
     { headers: { Authorization: `Bearer ${accessToken}` } }
   );
 
@@ -73,224 +100,220 @@ async function fetchMessageDetails(
     data.payload?.headers || [];
 
   const subject =
-    headers.find((h) => h.name === "Subject")?.value || "(No subject)";
-  const from = headers.find((h) => h.name === "From")?.value || "";
+    headers.find((h) => h.name === "Subject")?.value || "";
+  const to = headers.find((h) => h.name === "To")?.value || "";
   const date = headers.find((h) => h.name === "Date")?.value || "";
-  const snippet: string = data.snippet || "";
 
-  // Decode the email body
-  const bodyText = extractBodyText(data.payload);
-  const bodyPreview = bodyText.slice(0, 500);
+  // Verify subject matches our pattern
+  if (!subject.includes(SUBJECT_PREFIX) || !subject.toLowerCase().includes(SUBJECT_SUFFIX.toLowerCase())) {
+    return null;
+  }
 
-  // Extract dollar amounts from the full body + subject + snippet
-  const fullText = `${subject} ${snippet} ${bodyText}`;
-  const { bestAmount, allAmounts } = extractDollarAmounts(fullText);
-
-  // Extract client name from the "From" header
-  const suggestedClientName = parseClientName(from);
-
-  // Generate a project name from the subject line
-  const suggestedProjectName = parseProjectName(subject, suggestedClientName);
+  const suggestedProjectName = parseProjectName(subject);
+  const suggestedClientName = parseClientName(to);
 
   return {
     id: data.id,
     threadId: data.threadId,
     subject,
-    from,
+    to,
     date,
-    snippet,
-    bodyPreview,
     suggestedClientName,
     suggestedProjectName,
-    suggestedQuotedAmount: bestAmount,
-    allAmountsFound: allAmounts,
+    suggestedAmount: null,
   };
 }
 
-/** Recursively extract plain text from a Gmail message payload */
-function extractBodyText(payload: Record<string, unknown>): string {
-  if (!payload) return "";
+// ── Thread body scanning for dollar amounts ─────────────────────────
 
-  // If this part has a body with data, decode it
-  const body = payload.body as { data?: string; size?: number } | undefined;
-  const mimeType = payload.mimeType as string | undefined;
+/**
+ * Fetch all messages in a thread and extract the most likely contract amount.
+ * Scans for patterns like $1,500 / $2000.00 / $750 in email bodies.
+ */
+async function extractAmountFromThread(
+  accessToken: string,
+  threadId: string
+): Promise<number | null> {
+  const res = await fetch(
+    `${GMAIL_API}/threads/${threadId}?format=full`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
 
-  if (body?.data && mimeType) {
-    // Prefer text/plain, but also accept text/html
-    if (mimeType === "text/plain" || mimeType === "text/html") {
-      const decoded = decodeBase64Url(body.data);
-      if (mimeType === "text/html") {
-        return stripHtml(decoded);
-      }
-      return decoded;
-    }
+  if (!res.ok) return null;
+
+  const thread = await res.json();
+  const messages: Array<{ payload?: GmailPayload }> = thread.messages || [];
+
+  // Collect all dollar amounts found across all messages in the thread
+  const amounts: number[] = [];
+
+  for (const msg of messages) {
+    const body = extractTextBody(msg.payload);
+    if (!body) continue;
+
+    const found = parseDollarAmounts(body);
+    amounts.push(...found);
   }
 
-  // Recurse into multipart parts
-  const parts = payload.parts as Record<string, unknown>[] | undefined;
-  if (parts && Array.isArray(parts)) {
-    // Prefer text/plain part first
-    const plainPart = parts.find(
-      (p) => (p.mimeType as string) === "text/plain"
-    );
-    if (plainPart) {
-      const result = extractBodyText(plainPart);
-      if (result) return result;
-    }
-    // Fall back to any part that yields text
-    for (const part of parts) {
-      const result = extractBodyText(part);
-      if (result) return result;
-    }
-  }
+  if (amounts.length === 0) return null;
 
-  return "";
+  // Return the largest amount — contract totals are usually the biggest number
+  return Math.max(...amounts);
 }
 
-/** Decode base64url-encoded string (Gmail API format) */
-function decodeBase64Url(data: string): string {
-  // Replace URL-safe chars and add padding
+interface GmailPayload {
+  mimeType?: string;
+  body?: { data?: string; size?: number };
+  parts?: GmailPayload[];
+}
+
+/** Recursively extract plain text (or fallback to HTML stripped of tags) from a Gmail message payload */
+function extractTextBody(payload?: GmailPayload): string | null {
+  if (!payload) return null;
+
+  // Single-part message
+  if (payload.body?.data && payload.body.size && payload.body.size > 0) {
+    const decoded = base64UrlDecode(payload.body.data);
+    if (payload.mimeType === "text/plain") return decoded;
+    if (payload.mimeType === "text/html") return stripHtml(decoded);
+  }
+
+  // Multipart — prefer text/plain, fall back to text/html
+  if (payload.parts) {
+    const plain = payload.parts.find((p) => p.mimeType === "text/plain");
+    if (plain?.body?.data) return base64UrlDecode(plain.body.data);
+
+    const html = payload.parts.find((p) => p.mimeType === "text/html");
+    if (html?.body?.data) return stripHtml(base64UrlDecode(html.body.data));
+
+    // Nested multipart (e.g. multipart/alternative inside multipart/mixed)
+    for (const part of payload.parts) {
+      const nested = extractTextBody(part);
+      if (nested) return nested;
+    }
+  }
+
+  return null;
+}
+
+/** Decode base64url-encoded string (Gmail API encoding) */
+function base64UrlDecode(data: string): string {
   const base64 = data.replace(/-/g, "+").replace(/_/g, "/");
-  try {
-    return atob(base64);
-  } catch {
-    return "";
-  }
+  return atob(base64);
 }
 
-/** Strip HTML tags to get plain text */
+/** Strip HTML tags to get readable text */
 function stripHtml(html: string): string {
   return html
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n")
-    .replace(/<\/div>/gi, "\n")
-    .replace(/<\/tr>/gi, "\n")
-    .replace(/<\/li>/gi, "\n")
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\s{2,}/g, " ")
+    .replace(/&#?\w+;/g, " ")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
 /**
- * Extract dollar amounts from email text and pick the most likely quoted price.
- *
- * Strategy:
- * 1. Find all dollar amounts in the text ($X, $X,XXX, $X,XXX.XX)
- * 2. Look for amounts near contract keywords (total, price, quote, cost, fee, rate, compensation, payment)
- * 3. If a contextual match is found, use it; otherwise use the largest amount as the best guess
+ * Extract dollar amounts from text. Matches patterns like:
+ * $1,500  $2,000.00  $750  $12,500.50
+ * Ignores amounts under $50 (likely not contract totals).
  */
-function extractDollarAmounts(text: string): {
-  bestAmount: number | null;
-  allAmounts: number[];
-} {
-  // Match patterns like $1500, $1,500, $1,500.00, $15,000, $ 1500, etc.
-  const dollarRegex = /\$\s?([\d,]+(?:\.\d{1,2})?)/g;
-  const amounts: { value: number; index: number }[] = [];
+function parseDollarAmounts(text: string): number[] {
+  const regex = /\$\s*([\d,]+(?:\.\d{1,2})?)/g;
+  const amounts: number[] = [];
   let match;
 
-  while ((match = dollarRegex.exec(text)) !== null) {
+  while ((match = regex.exec(text)) !== null) {
     const raw = match[1].replace(/,/g, "");
     const value = parseFloat(raw);
-    // Filter out unreasonable amounts (less than $10 or more than $1M)
-    if (value >= 10 && value <= 1_000_000) {
-      amounts.push({ value, index: match.index });
+    if (!isNaN(value) && value >= 50) {
+      amounts.push(value);
     }
   }
 
-  if (amounts.length === 0) {
-    return { bestAmount: null, allAmounts: [] };
-  }
-
-  const allAmounts = [...new Set(amounts.map((a) => a.value))].sort(
-    (a, b) => b - a
-  );
-
-  // Look for amounts near price-indicating keywords
-  const priceKeywords =
-    /\b(total|price|quote|quoted|cost|fee|rate|compensation|payment|amount|sum|charge|budget|estimate|bid|invoice)\b/gi;
-  let bestAmount: number | null = null;
-
-  for (const amt of amounts) {
-    // Check 150 characters before and after the amount for context keywords
-    const contextStart = Math.max(0, amt.index - 150);
-    const contextEnd = Math.min(text.length, amt.index + 150);
-    const context = text.slice(contextStart, contextEnd);
-
-    if (priceKeywords.test(context)) {
-      // Among contextual matches, prefer the largest (likely the total)
-      if (bestAmount === null || amt.value > bestAmount) {
-        bestAmount = amt.value;
-      }
-      // Reset lastIndex since we reuse the regex
-      priceKeywords.lastIndex = 0;
-    }
-  }
-
-  // If no contextual match, fall back to the largest amount
-  if (bestAmount === null) {
-    bestAmount = allAmounts[0];
-  }
-
-  return { bestAmount, allAmounts };
+  return amounts;
 }
 
-/** Extract a clean name from an email "From" header like "John Smith <john@acme.com>" */
-function parseClientName(from: string): string {
-  // Try to extract the display name before the email
-  const match = from.match(/^"?([^"<]+)"?\s*</);
+// ── Name parsing ────────────────────────────────────────────────────
+
+/**
+ * Extract project name from subject like:
+ * "[Gardner Photo and Film LLC] Premiere Dance Academy of Year Concert 2026 signed"
+ * → "Premiere Dance Academy of Year Concert 2026"
+ */
+function parseProjectName(subject: string): string {
+  let clean = subject;
+
+  // Remove the prefix "[Gardner Photo and Film LLC] "
+  const prefixIdx = clean.indexOf("]");
+  if (prefixIdx !== -1) {
+    clean = clean.slice(prefixIdx + 1).trim();
+  }
+
+  // Remove trailing "signed" (case-insensitive)
+  clean = clean.replace(/\s+signed\s*$/i, "").trim();
+
+  return clean || "Untitled Project";
+}
+
+/** Extract a clean name from an email header like "John Smith <john@acme.com>" */
+function parseClientName(headerValue: string): string {
+  const first = headerValue.split(",")[0].trim();
+
+  // "John Smith <john@acme.com>" → "John Smith"
+  const match = first.match(/^"?([^"<]+)"?\s*</);
   if (match) return match[1].trim();
 
-  // If no display name, extract the domain as company name
-  const emailMatch = from.match(/@([^.>]+)/);
+  // john@acme.com → "Acme"
+  const emailMatch = first.match(/@([^.>]+)/);
   if (emailMatch) {
     const domain = emailMatch[1];
     return domain.charAt(0).toUpperCase() + domain.slice(1);
   }
 
-  return from.trim();
+  return first.trim() || "Unknown Client";
 }
 
-/** Generate a project name from the email subject */
-function parseProjectName(subject: string, clientName: string): string {
-  // Remove common prefixes like "Re:", "Fwd:", etc.
-  let clean = subject.replace(/^(Re|Fwd|FW|RE):\s*/gi, "").trim();
+// ── Imported email tracking (Firestore) ─────────────────────────────
 
-  // Remove generic words to make it more project-like
-  clean = clean
-    .replace(/\b(contract|agreement|signed|proposal|scope of work|sow|engagement)\b/gi, "")
-    .replace(/\s{2,}/g, " ")
-    .trim();
+const IMPORTED_COLLECTION = "users";
 
-  // If what's left is too short, combine with client name
-  if (clean.length < 3) {
-    return `${clientName} Project`;
-  }
-
-  return clean;
+/** Get email IDs that have already been imported or dismissed */
+export async function getImportedEmailIds(userId: string): Promise<Set<string>> {
+  const snap = await getDoc(doc(db, IMPORTED_COLLECTION, userId));
+  if (!snap.exists()) return new Set();
+  const data = snap.data();
+  return new Set((data.importedGmailIds as string[]) || []);
 }
 
-/** Get the list of email IDs that have already been imported (stored in localStorage) */
-export function getImportedEmailIds(): Set<string> {
-  try {
-    const stored = localStorage.getItem("everest_imported_emails");
-    return new Set(stored ? JSON.parse(stored) : []);
-  } catch {
-    return new Set();
+/** Mark email IDs as imported/dismissed in Firestore (persists across devices) */
+export async function markEmailsAsImported(userId: string, ids: string[]) {
+  const ref = doc(db, IMPORTED_COLLECTION, userId);
+  const snap = await getDoc(ref);
+  if (snap.exists()) {
+    await updateDoc(ref, { importedGmailIds: arrayUnion(...ids) });
+  } else {
+    await setDoc(ref, { importedGmailIds: ids }, { merge: true });
   }
 }
 
-/** Mark email IDs as imported so they don't show up again */
-export function markEmailsAsImported(ids: string[]) {
-  const existing = getImportedEmailIds();
-  ids.forEach((id) => existing.add(id));
-  localStorage.setItem(
-    "everest_imported_emails",
-    JSON.stringify([...existing])
+// ── Gmail scanning preference ───────────────────────────────────────
+
+/** Check if Gmail scanning is enabled for this user (default: true) */
+export async function isGmailScanEnabled(userId: string): Promise<boolean> {
+  const snap = await getDoc(doc(db, IMPORTED_COLLECTION, userId));
+  if (!snap.exists()) return true;
+  const data = snap.data();
+  // Default to true if field doesn't exist
+  return data.gmailScanEnabled !== false;
+}
+
+/** Toggle Gmail scanning on/off */
+export async function setGmailScanEnabled(userId: string, enabled: boolean) {
+  await setDoc(
+    doc(db, IMPORTED_COLLECTION, userId),
+    { gmailScanEnabled: enabled },
+    { merge: true }
   );
 }
