@@ -1,6 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
+import { adminAuth } from "@/lib/firebase-admin";
 
 function getGoogleKey() { return process.env.GOOGLE_PLACES_API_KEY || ""; }
+
+// ── Rate limiting (in-memory, per-user) ─────────────────────────────
+const MAX_REQUESTS_PER_HOUR = 10;
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+
+function checkRateLimit(userId: string): boolean {
+  const now = Date.now();
+  const entry = rateLimitMap.get(userId);
+
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(userId, { count: 1, resetAt: now + 60 * 60 * 1000 });
+    return true;
+  }
+
+  if (entry.count >= MAX_REQUESTS_PER_HOUR) return false;
+
+  entry.count++;
+  return true;
+}
+
+// ── Input validation constants ──────────────────────────────────────
+const MAX_CATEGORIES = 19;
+const MAX_RADIUS_METERS = 160_934; // ~100 miles
+const MAX_LOCATION_LENGTH = 200;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -155,6 +180,27 @@ async function searchPlaces(
 
 export async function POST(req: NextRequest) {
   try {
+    // Verify Firebase auth token
+    const authHeader = req.headers.get("authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    let userId: string;
+    try {
+      const decoded = await adminAuth.verifyIdToken(authHeader.split("Bearer ")[1]);
+      userId = decoded.uid;
+    } catch {
+      return NextResponse.json({ error: "Invalid or expired token" }, { status: 401 });
+    }
+
+    // Rate limit: max 10 searches per hour per user
+    if (!checkRateLimit(userId)) {
+      return NextResponse.json(
+        { error: "Rate limit exceeded. Max 10 searches per hour." },
+        { status: 429 }
+      );
+    }
+
     const body = await req.json();
     const { location, radiusMeters, categories } = body as {
       location: string;
@@ -162,9 +208,28 @@ export async function POST(req: NextRequest) {
       categories: string[];
     };
 
+    // Input validation
     if (!location || !radiusMeters || !categories?.length) {
       return NextResponse.json(
         { error: "Missing required fields" },
+        { status: 400 }
+      );
+    }
+    if (typeof location !== "string" || location.length > MAX_LOCATION_LENGTH) {
+      return NextResponse.json(
+        { error: "Location must be a string under 200 characters" },
+        { status: 400 }
+      );
+    }
+    if (typeof radiusMeters !== "number" || radiusMeters <= 0 || radiusMeters > MAX_RADIUS_METERS) {
+      return NextResponse.json(
+        { error: "Radius must be between 1 and 160,934 meters (~100 miles)" },
+        { status: 400 }
+      );
+    }
+    if (!Array.isArray(categories) || categories.length > MAX_CATEGORIES) {
+      return NextResponse.json(
+        { error: `Categories must be an array of 1-${MAX_CATEGORIES} items` },
         { status: 400 }
       );
     }

@@ -204,9 +204,13 @@ export default function LeadsPage() {
 
     try {
       const radius = RADIUS_OPTIONS[radiusIdx];
+      const token = await user.getIdToken();
       const res = await fetch("/api/leads/search", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
           location: location.trim(),
           radiusMeters: radius.meters,
