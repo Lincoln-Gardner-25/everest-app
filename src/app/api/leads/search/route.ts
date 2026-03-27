@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
 
-const GOOGLE_KEY = process.env.GOOGLE_PLACES_API_KEY!;
-const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY!;
+function getGoogleKey() { return process.env.GOOGLE_PLACES_API_KEY || ""; }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -28,6 +26,18 @@ const CATEGORY_QUERIES: Record<string, string> = {
   churches: "church",
 };
 
+// Fields we request from Places API (New)
+const PLACE_FIELDS = [
+  "places.id",
+  "places.displayName",
+  "places.formattedAddress",
+  "places.location",
+  "places.rating",
+  "places.userRatingCount",
+  "places.nationalPhoneNumber",
+  "places.websiteUri",
+].join(",");
+
 interface RawLead {
   place_id: string;
   name: string;
@@ -39,6 +49,108 @@ interface RawLead {
   lat: number;
   lng: number;
   category: string;
+}
+
+// ── Geocode using Places API (New) Text Search ─────────────────────
+async function geocodeLocation(
+  location: string
+): Promise<{ lat: number; lng: number } | null> {
+  const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Goog-Api-Key": getGoogleKey(),
+      "X-Goog-FieldMask": "places.location,places.displayName",
+    },
+    body: JSON.stringify({ textQuery: location, maxResultCount: 1 }),
+  });
+  const data = await res.json();
+  const place = data.places?.[0];
+  if (!place?.location) return null;
+  return { lat: place.location.latitude, lng: place.location.longitude };
+}
+
+// ── Search places by category using Places API (New) ───────────────
+async function searchPlaces(
+  query: string,
+  center: { lat: number; lng: number },
+  radiusMeters: number
+): Promise<Array<{
+  id: string;
+  name: string;
+  address: string;
+  phone: string | null;
+  website: string | null;
+  rating: number | null;
+  totalRatings: number | null;
+  lat: number;
+  lng: number;
+}>> {
+  const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Goog-Api-Key": getGoogleKey(),
+      "X-Goog-FieldMask": PLACE_FIELDS,
+    },
+    body: JSON.stringify({
+      textQuery: query,
+      ...(radiusMeters <= 50000
+        ? {
+            locationBias: {
+              circle: {
+                center: { latitude: center.lat, longitude: center.lng },
+                radius: radiusMeters,
+              },
+            },
+          }
+        : {
+            locationRestriction: {
+              rectangle: {
+                low: {
+                  latitude: center.lat - (radiusMeters / 111320),
+                  longitude: center.lng - (radiusMeters / (111320 * Math.cos(center.lat * Math.PI / 180))),
+                },
+                high: {
+                  latitude: center.lat + (radiusMeters / 111320),
+                  longitude: center.lng + (radiusMeters / (111320 * Math.cos(center.lat * Math.PI / 180))),
+                },
+              },
+            },
+          }),
+      maxResultCount: 20,
+    }),
+  });
+
+  const data = await res.json();
+
+  if (data.error) {
+    console.error("Places API error:", data.error.message);
+    return [];
+  }
+
+  return (data.places || []).map(
+    (p: {
+      id: string;
+      displayName?: { text: string };
+      formattedAddress?: string;
+      nationalPhoneNumber?: string;
+      websiteUri?: string;
+      rating?: number;
+      userRatingCount?: number;
+      location?: { latitude: number; longitude: number };
+    }) => ({
+      id: p.id,
+      name: p.displayName?.text || "Unknown",
+      address: p.formattedAddress || "",
+      phone: p.nationalPhoneNumber || null,
+      website: p.websiteUri || null,
+      rating: p.rating ?? null,
+      totalRatings: p.userRatingCount ?? null,
+      lat: p.location?.latitude ?? center.lat,
+      lng: p.location?.longitude ?? center.lng,
+    })
+  );
 }
 
 export async function POST(req: NextRequest) {
@@ -57,70 +169,43 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // A. Geocode
-    const geoRes = await fetch(
-      `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(location)}&key=${GOOGLE_KEY}`
-    );
-    const geoData = await geoRes.json();
-    if (!geoData.results?.length) {
+    // A. Geocode using Places API text search
+    const center = await geocodeLocation(location);
+    if (!center) {
       return NextResponse.json(
-        { error: "Could not geocode location" },
+        { error: "Could not geocode location. Check the location name and try again." },
         { status: 400 }
       );
     }
-    const { lat, lng } = geoData.results[0].geometry.location;
+    const { lat, lng } = center;
 
-    // B. Scrape Google Places
+    // B. Search Google Places (New API) per category
     const seen = new Set<string>();
     const leads: RawLead[] = [];
 
     for (const category of categories) {
       const queryStr = CATEGORY_QUERIES[category] || category;
-      const searchUrl = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(
-        `${queryStr} in ${location}`
-      )}&location=${lat},${lng}&radius=${radiusMeters}&key=${GOOGLE_KEY}`;
+      const fullQuery = `${queryStr} in ${location}`;
 
-      const searchRes = await fetch(searchUrl);
-      const searchData = await searchRes.json();
-      const results = searchData.results || [];
+      // Rate limit between category searches
+      if (leads.length > 0) await sleep(200);
+
+      const results = await searchPlaces(fullQuery, center, radiusMeters);
 
       for (const place of results) {
-        if (seen.has(place.place_id)) continue;
-        seen.add(place.place_id);
-
-        // Fetch place details for phone + website
-        await sleep(200);
-        const detailUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${place.place_id}&fields=name,formatted_address,formatted_phone_number,website,rating,user_ratings_total,geometry&key=${GOOGLE_KEY}`;
-
-        let phone: string | null = null;
-        let website: string | null = null;
-        let detailRating: number | null = place.rating ?? null;
-        let totalRatings: number | null = place.user_ratings_total ?? null;
-
-        try {
-          const detailRes = await fetch(detailUrl);
-          const detailData = await detailRes.json();
-          if (detailData.result) {
-            phone = detailData.result.formatted_phone_number || null;
-            website = detailData.result.website || null;
-            detailRating = detailData.result.rating ?? detailRating;
-            totalRatings =
-              detailData.result.user_ratings_total ?? totalRatings;
-          }
-        } catch {
-          // Non-critical — continue without details
-        }
+        if (seen.has(place.id)) continue;
+        seen.add(place.id);
 
         leads.push({
-          place_id: place.place_id,
+          place_id: place.id,
           name: place.name,
-          address: place.formatted_address || "",
-          phone,
-          website,
-          rating: detailRating,
-          totalRatings,
-          lat: place.geometry?.location?.lat ?? lat,
-          lng: place.geometry?.location?.lng ?? lng,
+          address: place.address,
+          phone: place.phone,
+          website: place.website,
+          rating: place.rating,
+          totalRatings: place.totalRatings,
+          lat: place.lat,
+          lng: place.lng,
           category,
         });
       }
@@ -130,57 +215,54 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ centerLat: lat, centerLng: lng, leads: [] });
     }
 
-    // C. Claude AI Scoring
-    let scoredLeads = leads.map((l) => ({
-      ...l,
-      score: 5,
-      reason: "Could not score automatically.",
-      isStarLead: false,
-    }));
+    // C. Rule-based scoring
+    const HIGH_VIDEO_CATEGORIES = new Set([
+      "real estate agencies",
+      "restaurants",
+      "hotels & resorts",
+      "car dealerships",
+      "wedding planners",
+      "dental offices",
+    ]);
 
-    try {
-      const anthropic = new Anthropic({ apiKey: ANTHROPIC_KEY });
-      const msg = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 4096,
-        system:
-          "You are a business development assistant helping a freelance videographer identify the most promising leads for outreach. You will receive a list of businesses and you must score each one from 1 to 10 based on how likely they are to need and pay for professional videography services. Consider: business type, Google rating, number of reviews (more reviews = more established = more likely to invest in marketing), and whether they likely use video content in their industry. Return ONLY a valid JSON array — no markdown, no backticks, no explanation. Each element must have exactly these fields: place_id (string), score (integer 1-10), reason (string, max 15 words explaining the score).",
-        messages: [
-          {
-            role: "user",
-            content: JSON.stringify(
-              leads.map((l) => ({
-                place_id: l.place_id,
-                name: l.name,
-                category: l.category,
-                rating: l.rating,
-                totalRatings: l.totalRatings,
-              }))
-            ),
-          },
-        ],
-      });
+    const scoredLeads = leads.map((l) => {
+      let score = 5;
+      const reasons: string[] = [];
 
-      const text =
-        msg.content[0].type === "text" ? msg.content[0].text : "";
-      const scores: { place_id: string; score: number; reason: string }[] =
-        JSON.parse(text);
+      // Rating bonus
+      if (l.rating != null) {
+        if (l.rating >= 4.5) { score += 2; reasons.push("High rating"); }
+        else if (l.rating >= 4.0) { score += 1; reasons.push("Good rating"); }
+        else if (l.rating < 3.5) { score -= 1; reasons.push("Low rating"); }
+      }
 
-      const scoreMap = new Map(scores.map((s) => [s.place_id, s]));
-      scoredLeads = leads.map((l) => {
-        const s = scoreMap.get(l.place_id);
-        const score = s?.score ?? 5;
-        return {
-          ...l,
-          score,
-          reason: s?.reason ?? "Could not score automatically.",
-          isStarLead: score >= 7,
-        };
-      });
-    } catch (err) {
-      console.error("Claude scoring failed:", err);
-      // Keep default scores
-    }
+      // Review count bonus
+      if (l.totalRatings != null) {
+        if (l.totalRatings >= 200) { score += 2; reasons.push("Many reviews"); }
+        else if (l.totalRatings >= 50) { score += 1; reasons.push("Solid reviews"); }
+        else if (l.totalRatings < 10) { score -= 1; reasons.push("Low review count"); }
+      }
+
+      // Contact info bonus
+      if (l.website) { score += 1; reasons.push("Has website"); }
+      if (l.phone) { score += 1; reasons.push("Has phone"); }
+
+      // Business type bonus
+      if (HIGH_VIDEO_CATEGORIES.has(l.category)) {
+        score += 1;
+        reasons.push("High video demand industry");
+      }
+
+      // Clamp 1-10
+      score = Math.max(1, Math.min(10, score));
+
+      return {
+        ...l,
+        score,
+        reason: reasons.length > 0 ? reasons.join(", ") : "Average lead profile",
+        isStarLead: score >= 7,
+      };
+    });
 
     // D. Return
     return NextResponse.json({

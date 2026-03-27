@@ -301,8 +301,8 @@ export default function LeadsPage() {
       { header: "Website", key: "website", width: 35 },
       { header: "Google Rating", key: "rating", width: 14 },
       { header: "Total Reviews", key: "totalRatings", width: 14 },
-      { header: "AI Score", key: "score", width: 10 },
-      { header: "AI Reason", key: "reason", width: 40 },
+      { header: "Score", key: "score", width: 10 },
+      { header: "Reason", key: "reason", width: 40 },
       { header: "Lead Quality", key: "quality", width: 14 },
     ];
 
@@ -365,7 +365,7 @@ export default function LeadsPage() {
         <p style="color:#666;margin:0 0 4px">${lead.address}</p>
         ${lead.phone ? `<p style="margin:0 0 2px">📞 ${lead.phone}</p>` : ""}
         ${lead.website ? `<p style="margin:0 0 4px"><a href="${lead.website}" target="_blank" rel="noopener" style="color:#4A6FA5">🔗 Website</a></p>` : ""}
-        <p style="margin:4px 0 2px"><strong>AI Score:</strong> ${lead.score}/10</p>
+        <p style="margin:4px 0 2px"><strong>Score:</strong> ${lead.score}/10</p>
         <p style="color:#555;margin:0 0 6px">${lead.reason}</p>
         ${!lead.isStarLead ? `<button onclick="window.__promoteLead&&window.__promoteLead('${lead.place_id}')" style="background:#F5A623;color:#fff;border:none;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">⭐ Promote</button>` : '<span style="color:#F5A623;font-weight:600">⭐ High-Value Lead</span>'}
       </div>
@@ -570,7 +570,7 @@ export default function LeadsPage() {
             <div className="absolute inset-0 rounded-2xl bg-background/70 flex flex-col items-center justify-center gap-3 z-10">
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
               <p className="text-sm font-medium text-muted-foreground">
-                Searching for leads and scoring with AI...
+                Searching for leads and scoring results...
               </p>
             </div>
           )}
