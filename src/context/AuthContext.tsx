@@ -75,18 +75,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  /** Re-authenticate with Google to get a fresh Gmail access token */
+  /** Get a Gmail access token without changing the signed-in Firebase user.
+   *  We sign in to Google in a second Auth instance so the primary auth state is untouched. */
   async function connectGmail(): Promise<string | null> {
-    const provider = new GoogleAuthProvider();
-    provider.addScope("https://www.googleapis.com/auth/gmail.readonly");
-    const result = await signInWithPopup(auth, provider);
-    const credential = GoogleAuthProvider.credentialFromResult(result);
-    if (credential?.accessToken) {
-      setGmailAccessToken(credential.accessToken);
-      sessionStorage.setItem(GMAIL_TOKEN_KEY, credential.accessToken);
-      return credential.accessToken;
+    // Use a temporary, isolated auth reference so signInWithPopup doesn't
+    // overwrite the current user on the primary `auth` instance.
+    const { initializeApp, deleteApp } = await import("firebase/app");
+    const { getAuth: getTempAuth, signInWithPopup: tempSignIn, GoogleAuthProvider: TempGoogleProvider } = await import("firebase/auth");
+
+    const tempApp = initializeApp(auth.app.options, "gmail-temp-" + Date.now());
+    const tempAuth = getTempAuth(tempApp);
+
+    try {
+      const provider = new TempGoogleProvider();
+      provider.addScope("https://www.googleapis.com/auth/gmail.readonly");
+      // Hint the user's current email so the popup pre-selects the right account
+      if (user?.email) {
+        provider.setCustomParameters({ login_hint: user.email });
+      }
+      const result = await tempSignIn(tempAuth, provider);
+      const credential = TempGoogleProvider.credentialFromResult(result);
+      if (credential?.accessToken) {
+        setGmailAccessToken(credential.accessToken);
+        sessionStorage.setItem(GMAIL_TOKEN_KEY, credential.accessToken);
+        return credential.accessToken;
+      }
+      return null;
+    } finally {
+      await deleteApp(tempApp);
     }
-    return null;
   }
 
   async function signOut() {
