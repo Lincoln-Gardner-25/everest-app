@@ -12,9 +12,6 @@ interface InviteCodeDialogProps {
   onSuccess: (code: string) => void;
 }
 
-// Client-side validation — must match server-side codes
-const VALID_CODES = new Set(["TRY_FOR_FREE", "EVEREST-FREE", "EVEREST-BETA", "VIDEOGRAPHER-2026"]);
-
 export default function InviteCodeDialog({
   open,
   onClose,
@@ -34,17 +31,33 @@ export default function InviteCodeDialog({
 
     const normalized = code.trim().toUpperCase();
 
-    // Validate locally (no API call needed, no Firestore persistence)
-    if (!VALID_CODES.has(normalized)) {
-      setError("Invalid coupon code");
-      setLoading(false);
-      return;
-    }
+    try {
+      // Validate coupon server-side only — no codes in the client bundle
+      const token = await getIdToken();
+      const res = await fetch("/api/invite/validate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ code: normalized }),
+      });
 
-    onSuccess(normalized);
-    setCode("");
-    onClose();
-    setLoading(false);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || "Invalid coupon code");
+        setLoading(false);
+        return;
+      }
+
+      onSuccess(normalized);
+      setCode("");
+      onClose();
+    } catch {
+      setError("Failed to validate code. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (

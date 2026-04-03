@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminAuth } from "@/lib/firebase-admin";
+import { adminAuth, adminDb } from "@/lib/firebase-admin";
 import { enrichLeadBatch, type EnrichmentOptions } from "@/lib/enrichment";
 
 const MAX_LEADS_PER_REQUEST = 10;
@@ -43,10 +43,21 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { leads, enrichmentOptions } = body as {
+    const { leads, enrichmentOptions, searchId } = body as {
       leads: Array<{ place_id: string; name: string; website: string | null }>;
       enrichmentOptions?: EnrichmentOptions;
+      searchId?: string;
     };
+
+    // Verify the user owns this search (proves they paid for it or used a valid coupon)
+    if (!searchId || typeof searchId !== "string") {
+      return NextResponse.json({ error: "searchId is required" }, { status: 400 });
+    }
+
+    const searchDoc = await adminDb.doc(`leadSearches/${searchId}`).get();
+    if (!searchDoc.exists || searchDoc.data()?.userId !== userId) {
+      return NextResponse.json({ error: "Search not found or unauthorized" }, { status: 403 });
+    }
 
     if (!Array.isArray(leads) || leads.length === 0) {
       return NextResponse.json({ error: "No leads to enrich" }, { status: 400 });

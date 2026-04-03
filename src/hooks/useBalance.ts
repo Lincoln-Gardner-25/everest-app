@@ -28,7 +28,7 @@ export function useBalance(userId: string | undefined) {
         if (snap.exists()) {
           const data = snap.data();
           setBalance(data.balance ?? 0);
-          setHasInviteCode(!!data.inviteCode || !!data.couponCode);
+          setHasInviteCode(false); // No longer trust client-side invite code flags
           // Coupon
           setCouponCode(data.couponCode ?? null);
           setCouponMaxSearches(data.couponMaxSearches ?? 0);

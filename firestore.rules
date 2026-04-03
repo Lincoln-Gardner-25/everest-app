@@ -1,9 +1,26 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Users can only read/write their own profile
+    // Users can read their own profile; writes restricted to safe fields only
     match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read: if request.auth != null && request.auth.uid == userId;
+
+      // Only allow client to write these specific safe fields
+      // Server (admin SDK) bypasses rules and can write stripeCustomerId, balance, etc.
+      allow create: if request.auth != null && request.auth.uid == userId
+        && onlySafeUserFields();
+      allow update: if request.auth != null && request.auth.uid == userId
+        && onlySafeUserFields();
+
+      function onlySafeUserFields() {
+        let allowed = [
+          'monthlyGoal', 'yearlyGoal', 'targetHourlyRate', 'specialty',
+          'onboardingComplete', 'createdAt', 'balance',
+          'importedGmailIds', 'gmailScanEnabled'
+        ];
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowed)
+          || (resource == null && request.resource.data.keys().hasOnly(allowed));
+      }
     }
     // Users can only read/write their own projects
     match /projects/{projectId} {
@@ -19,6 +36,10 @@ service cloud.firestore {
     match /leadSearches/{searchId} {
       allow read, write: if request.auth != null && request.auth.uid == resource.data.userId;
       allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
+    }
+    // Stripe webhook events — admin SDK only (no client access)
+    match /stripeWebhookEvents/{eventId} {
+      allow read, write: if false;
     }
   }
 }

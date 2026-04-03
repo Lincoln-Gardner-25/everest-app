@@ -214,6 +214,32 @@ export async function POST(req: NextRequest) {
       couponCode?: string;
     };
 
+    // ── Input validation FIRST (before payment, so invalid requests aren't charged) ──
+    if (!location || !radiusMeters || !categories?.length) {
+      return NextResponse.json(
+        { error: "Missing required fields" },
+        { status: 400 }
+      );
+    }
+    if (typeof location !== "string" || location.length > MAX_LOCATION_LENGTH) {
+      return NextResponse.json(
+        { error: "Location must be a string under 200 characters" },
+        { status: 400 }
+      );
+    }
+    if (typeof radiusMeters !== "number" || radiusMeters <= 0 || radiusMeters > MAX_RADIUS_METERS) {
+      return NextResponse.json(
+        { error: "Radius must be between 1 and 160,934 meters (~100 miles)" },
+        { status: 400 }
+      );
+    }
+    if (!Array.isArray(categories) || categories.length > MAX_CATEGORIES) {
+      return NextResponse.json(
+        { error: `Categories must be an array of 1-${MAX_CATEGORIES} items` },
+        { status: 400 }
+      );
+    }
+
     // ── Payment gate: per-search coupon OR server-side Stripe charge ──
     const enrichment = enrichmentOptions ?? { youtube: true, braveSearch: true, apollo: true, hunter: true };
     const leadCount = maxLeads ?? 25;
@@ -222,11 +248,10 @@ export async function POST(req: NextRequest) {
     const userSnap = await userRef.get();
     const userData = userSnap.data() || {};
 
-    // Validate coupon code if provided
+    // Validate coupon code server-side only (codes never sent to client)
     const VALID_CODES = new Set(["TRY_FOR_FREE", "EVEREST-FREE", "EVEREST-BETA", "VIDEOGRAPHER-2026"]);
     const hasValidCoupon = !!requestCoupon && VALID_CODES.has(requestCoupon.trim().toUpperCase());
-    const hasInviteCode = !!userData.inviteCode;
-    const isFree = hasValidCoupon || hasInviteCode;
+    const isFree = hasValidCoupon;
 
     if (!isFree) {
       // Calculate cost server-side — never trust the client
@@ -298,32 +323,6 @@ export async function POST(req: NextRequest) {
           { status: 402 }
         );
       }
-    }
-
-    // Input validation
-    if (!location || !radiusMeters || !categories?.length) {
-      return NextResponse.json(
-        { error: "Missing required fields" },
-        { status: 400 }
-      );
-    }
-    if (typeof location !== "string" || location.length > MAX_LOCATION_LENGTH) {
-      return NextResponse.json(
-        { error: "Location must be a string under 200 characters" },
-        { status: 400 }
-      );
-    }
-    if (typeof radiusMeters !== "number" || radiusMeters <= 0 || radiusMeters > MAX_RADIUS_METERS) {
-      return NextResponse.json(
-        { error: "Radius must be between 1 and 160,934 meters (~100 miles)" },
-        { status: 400 }
-      );
-    }
-    if (!Array.isArray(categories) || categories.length > MAX_CATEGORIES) {
-      return NextResponse.json(
-        { error: `Categories must be an array of 1-${MAX_CATEGORIES} items` },
-        { status: 400 }
-      );
     }
 
     // A. Geocode using Places API text search

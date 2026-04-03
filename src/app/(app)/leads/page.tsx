@@ -371,7 +371,7 @@ export default function LeadsPage() {
       setDuplicatesRemoved(data.duplicatesRemoved ?? 0);
       setActiveCoupon(null); // Clear coupon after use
 
-      // Save to Firestore (non-blocking — don't let save failures hide results)
+      // Save to Firestore, then trigger enrichment with the searchId
       saveLeadSearch(user.uid, {
         location: location.trim(),
         radiusMiles: radius.miles,
@@ -381,14 +381,14 @@ export default function LeadsPage() {
         centerLng: data.centerLng,
         leads: data.leads,
       })
-        .then(() => getPastSearches(user.uid))
-        .then(setPastSearches)
+        .then((docRef) => {
+          getPastSearches(user.uid).then(setPastSearches).catch(() => {});
+          // Trigger enrichment with the saved search ID (proves payment)
+          if (data.leads.length > 0 && (enrichment.youtube || enrichment.braveSearch || enrichment.apollo || enrichment.hunter)) {
+            triggerEnrichment(data.leads, token, docRef.id);
+          }
+        })
         .catch((err) => console.error("Failed to save search:", err));
-
-      // Trigger enrichment
-      if (data.leads.length > 0 && (enrichment.youtube || enrichment.braveSearch || enrichment.apollo || enrichment.hunter)) {
-        triggerEnrichment(data.leads, token);
-      }
     } catch (err) {
       console.error("Search failed:", err);
       setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
@@ -417,7 +417,7 @@ export default function LeadsPage() {
   }
 
   // ── Trigger enrichment ─────────────────────────────────────────
-  async function triggerEnrichment(searchLeads: Lead[], token: string) {
+  async function triggerEnrichment(searchLeads: Lead[], token: string, searchId?: string) {
     const toEnrich = [...searchLeads]
       .sort((a, b) => b.score - a.score)
       .slice(0, 10)
@@ -433,7 +433,7 @@ export default function LeadsPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ leads: toEnrich, enrichmentOptions: enrichment }),
+        body: JSON.stringify({ leads: toEnrich, enrichmentOptions: enrichment, searchId }),
       });
 
       if (!res.ok) return;
