@@ -793,7 +793,7 @@ export default function LeadsPage() {
           open={showInviteCode}
           onClose={() => setShowInviteCode(false)}
           getIdToken={() => user!.getIdToken()}
-          onSuccess={(code: string) => setActiveCoupon(code)}
+          onSuccess={(code: string) => { setActiveCoupon(code); setError(""); }}
         />
       </div>
     );
