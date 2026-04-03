@@ -239,7 +239,7 @@ export default function DashboardPage() {
   });
 
   return (
-    <div>
+    <div className="max-w-5xl mx-auto">
       {/* Header */}
       <div className="mb-8">
         <h1

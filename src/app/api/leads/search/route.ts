@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminAuth } from "@/lib/firebase-admin";
+import { adminAuth, adminDb } from "@/lib/firebase-admin";
+import { getStripe } from "@/lib/stripe";
+
+import { calculateSearchCost, dollarsToCents, type EnrichmentOptions } from "@/lib/pricing";
 
 function getGoogleKey() { return process.env.GOOGLE_PLACES_API_KEY || ""; }
 
@@ -202,11 +205,100 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { location, radiusMeters, categories } = body as {
+    const { location, radiusMeters, categories, maxLeads, enrichmentOptions, couponCode: requestCoupon } = body as {
       location: string;
       radiusMeters: number;
       categories: string[];
+      maxLeads?: number;
+      enrichmentOptions?: EnrichmentOptions;
+      couponCode?: string;
     };
+
+    // ── Payment gate: per-search coupon OR server-side Stripe charge ──
+    const enrichment = enrichmentOptions ?? { youtube: true, braveSearch: true, apollo: true, hunter: true };
+    const leadCount = maxLeads ?? 25;
+
+    const userRef = adminDb.doc(`users/${userId}`);
+    const userSnap = await userRef.get();
+    const userData = userSnap.data() || {};
+
+    // Validate coupon code if provided
+    const VALID_CODES = new Set(["TRY_FOR_FREE", "EVEREST-FREE", "EVEREST-BETA", "VIDEOGRAPHER-2026"]);
+    const hasValidCoupon = !!requestCoupon && VALID_CODES.has(requestCoupon.trim().toUpperCase());
+    const hasInviteCode = !!userData.inviteCode;
+    const isFree = hasValidCoupon || hasInviteCode;
+
+    if (!isFree) {
+      // Calculate cost server-side — never trust the client
+      const { total: costDollars } = calculateSearchCost(leadCount, enrichment);
+      const costCents = dollarsToCents(costDollars);
+      const chargeAmount = Math.max(50, costCents); // Stripe minimum is 50 cents
+
+      if (!userData.stripeCustomerId) {
+        return NextResponse.json(
+          { error: "No payment method on file. Please add a card in Settings." },
+          { status: 402 }
+        );
+      }
+
+      // Charge the card server-side before proceeding with the search
+      try {
+        const stripe = getStripe();
+        const paymentMethods = await stripe.paymentMethods.list({
+          customer: userData.stripeCustomerId,
+          type: "card",
+          limit: 1,
+        });
+
+        if (paymentMethods.data.length === 0) {
+          return NextResponse.json(
+            { error: "No payment method on file. Please add a card in Settings." },
+            { status: 402 }
+          );
+        }
+
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount: chargeAmount,
+          currency: "usd",
+          customer: userData.stripeCustomerId,
+          payment_method: paymentMethods.data[0].id,
+          off_session: true,
+          confirm: true,
+          description: `Everest Leads: ${leadCount} leads in ${location}`,
+          metadata: {
+            firebaseUserId: userId,
+            searchLocation: location,
+            leadCount: String(leadCount),
+          },
+        });
+
+        if (paymentIntent.status !== "succeeded") {
+          return NextResponse.json(
+            { error: "Payment was not completed. Please check your card in Settings." },
+            { status: 402 }
+          );
+        }
+      } catch (err) {
+        // Handle Stripe card errors specifically
+        if (
+          err &&
+          typeof err === "object" &&
+          "type" in err &&
+          (err as { type: string }).type === "StripeCardError"
+        ) {
+          const stripeErr = err as unknown as { message: string };
+          return NextResponse.json(
+            { error: stripeErr.message },
+            { status: 402 }
+          );
+        }
+        console.error("Server-side charge error:", err);
+        return NextResponse.json(
+          { error: "Payment failed. Please try again or check your card in Settings." },
+          { status: 402 }
+        );
+      }
+    }
 
     // Input validation
     if (!location || !radiusMeters || !categories?.length) {
@@ -244,9 +336,32 @@ export async function POST(req: NextRequest) {
     }
     const { lat, lng } = center;
 
-    // B. Search Google Places (New API) per category
+    // B. Collect place_ids from past searches to deduplicate
+    const pastPlaceIds = new Set<string>();
+    try {
+      const pastSnap = await adminDb
+        .collection("leadSearches")
+        .where("userId", "==", userId)
+        .orderBy("createdAt", "desc")
+        .limit(20)
+        .get();
+      for (const doc of pastSnap.docs) {
+        const docLeads = doc.data().leads as Array<{ place_id: string }> | undefined;
+        if (docLeads) {
+          for (const l of docLeads) {
+            if (l.place_id) pastPlaceIds.add(l.place_id);
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Failed to fetch past searches for dedup:", err);
+      // Continue without dedup — don't block the search
+    }
+
+    // C. Search Google Places (New API) per category
     const seen = new Set<string>();
     const leads: RawLead[] = [];
+    let duplicatesRemoved = 0;
 
     for (const category of categories) {
       const queryStr = CATEGORY_QUERIES[category] || category;
@@ -260,6 +375,12 @@ export async function POST(req: NextRequest) {
       for (const place of results) {
         if (seen.has(place.id)) continue;
         seen.add(place.id);
+
+        // Skip leads the user already has from past searches
+        if (pastPlaceIds.has(place.id)) {
+          duplicatesRemoved++;
+          continue;
+        }
 
         leads.push({
           place_id: place.id,
@@ -277,7 +398,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (leads.length === 0) {
-      return NextResponse.json({ centerLat: lat, centerLng: lng, leads: [] });
+      return NextResponse.json({ centerLat: lat, centerLng: lng, leads: [], duplicatesRemoved });
     }
 
     // C. Rule-based scoring
@@ -334,6 +455,7 @@ export async function POST(req: NextRequest) {
       centerLat: lat,
       centerLng: lng,
       leads: scoredLeads,
+      duplicatesRemoved,
     });
   } catch (err) {
     console.error("Lead search error:", err);

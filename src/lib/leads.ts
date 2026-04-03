@@ -25,6 +25,15 @@ export interface Lead {
   score: number;
   reason: string;
   isStarLead: boolean;
+  // Enrichment fields (populated progressively)
+  youtubeStatus?: "none" | "dead" | "low" | "active" | null;
+  youtubeSubscribers?: number | null;
+  youtubeLastUpload?: string | null;
+  techStack?: string[];
+  contactName?: string | null;
+  contactEmail?: string | null;
+  emailVerified?: boolean | null;
+  videoGapScore?: number;
 }
 
 export interface LeadSearch {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   EmailAuthProvider,
   reauthenticateWithCredential,
@@ -13,7 +13,92 @@ import { isGmailScanEnabled, setGmailScanEnabled } from "@/lib/gmail";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { CheckCircle2, KeyRound, Mail } from "lucide-react";
+import { CheckCircle2, KeyRound, Mail, CreditCard, Trash2, RefreshCw, Loader2, Plus } from "lucide-react";
+import { loadStripe } from "@stripe/stripe-js";
+import { Elements, CardElement, useStripe, useElements } from "@stripe/react-stripe-js";
+
+const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || "");
+
+interface CardInfo {
+  last4: string;
+  brand: string;
+  expMonth: number;
+  expYear: number;
+}
+
+function CardForm({ onSuccess }: { onSuccess: () => void }) {
+  const stripe = useStripe();
+  const elements = useElements();
+  const { user } = useAuth();
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!stripe || !elements || !user) return;
+    setSaving(true);
+    setError("");
+
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch("/api/stripe/setup-intent", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const { clientSecret } = await res.json();
+      if (!clientSecret) throw new Error("Failed to create setup intent");
+
+      const cardElement = elements.getElement(CardElement);
+      if (!cardElement) throw new Error("Card element not found");
+
+      const { error: stripeError } = await stripe.confirmCardSetup(clientSecret, {
+        payment_method: { card: cardElement },
+      });
+
+      if (stripeError) {
+        setError(stripeError.message || "Failed to save card");
+      } else {
+        onSuccess();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="rounded-lg border p-3 bg-white">
+        <CardElement
+          options={{
+            style: {
+              base: {
+                fontSize: "16px",
+                color: "#1F2937",
+                fontFamily: "Inter, sans-serif",
+                "::placeholder": { color: "#9CA3AF" },
+              },
+            },
+          }}
+        />
+      </div>
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      <div className="flex gap-2">
+        <Button type="submit" disabled={saving || !stripe} className="flex-1">
+          {saving ? (
+            <>
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              Saving...
+            </>
+          ) : (
+            "Save Card"
+          )}
+        </Button>
+      </div>
+    </form>
+  );
+}
 
 export default function SettingsPage() {
   const { user } = useAuth();
@@ -27,6 +112,57 @@ export default function SettingsPage() {
   const [resetSending, setResetSending] = useState(false);
   const [resetSent, setResetSent] = useState(false);
   const [resetError, setResetError] = useState("");
+
+  // Payment method
+  const [cardInfo, setCardInfo] = useState<CardInfo | null>(null);
+  const [cardLoading, setCardLoading] = useState(true);
+  const [showCardForm, setShowCardForm] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [cardSuccess, setCardSuccess] = useState("");
+
+  const fetchCard = useCallback(async () => {
+    if (!user) return;
+    setCardLoading(true);
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch("/api/stripe/payment-method", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCardInfo(data.last4 ? data : null);
+      } else {
+        setCardInfo(null);
+      }
+    } catch {
+      setCardInfo(null);
+    } finally {
+      setCardLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    fetchCard();
+  }, [fetchCard]);
+
+  async function handleRemoveCard() {
+    if (!user || removing) return;
+    setRemoving(true);
+    try {
+      const token = await user.getIdToken();
+      await fetch("/api/stripe/payment-method", {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setCardInfo(null);
+      setCardSuccess("Card removed");
+      setTimeout(() => setCardSuccess(""), 3000);
+    } catch {
+      // silent fail
+    } finally {
+      setRemoving(false);
+    }
+  }
 
   // Gmail scanning toggle
   const [gmailEnabled, setGmailEnabled] = useState(true);
@@ -112,7 +248,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <div>
+    <div className="max-w-lg mx-auto">
       {/* Header */}
       <div className="mb-8">
         <h1
@@ -124,7 +260,7 @@ export default function SettingsPage() {
         <p className="text-muted-foreground">Manage your account settings.</p>
       </div>
 
-      <div className="max-w-lg space-y-6">
+      <div className="space-y-6">
         {/* Gmail scanning toggle */}
         <div className="rounded-2xl border bg-card p-6 space-y-4">
           <div className="flex items-center gap-2">
@@ -153,6 +289,101 @@ export default function SettingsPage() {
               />
             </button>
           </div>
+        </div>
+
+        {/* Payment Method card */}
+        <div className="rounded-2xl border bg-card p-6 space-y-4">
+          <div className="flex items-center gap-2">
+            <CreditCard className="h-4 w-4 text-muted-foreground" />
+            <h2 className="font-semibold text-foreground">Payment Method</h2>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Your card on file for purchasing leads. You are never charged without confirming first.
+          </p>
+
+          {cardLoading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading...
+            </div>
+          ) : cardInfo && !showCardForm ? (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-4 py-3">
+                <div className="flex items-center gap-3">
+                  <CreditCard className="h-5 w-5 text-primary" />
+                  <div>
+                    <p className="text-sm font-medium text-foreground capitalize">
+                      {cardInfo.brand} ending in {cardInfo.last4}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Expires {String(cardInfo.expMonth).padStart(2, "0")}/{cardInfo.expYear}
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowCardForm(true)}
+                >
+                  <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                  Update Card
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleRemoveCard}
+                  disabled={removing}
+                  className="text-destructive hover:text-destructive"
+                >
+                  <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                  {removing ? "Removing..." : "Remove"}
+                </Button>
+              </div>
+              {cardSuccess && (
+                <span className="flex items-center gap-1.5 text-sm font-medium text-green-700">
+                  <CheckCircle2 className="h-4 w-4" />
+                  {cardSuccess}
+                </span>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {!showCardForm ? (
+                <Button
+                  variant="outline"
+                  onClick={() => setShowCardForm(true)}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Payment Method
+                </Button>
+              ) : (
+                <Elements stripe={stripePromise}>
+                  <CardForm
+                    onSuccess={() => {
+                      setShowCardForm(false);
+                      setCardSuccess("Card saved successfully");
+                      setTimeout(() => setCardSuccess(""), 3000);
+                      fetchCard();
+                    }}
+                  />
+                  <button
+                    onClick={() => setShowCardForm(false)}
+                    className="text-sm text-muted-foreground underline mt-2"
+                  >
+                    Cancel
+                  </button>
+                </Elements>
+              )}
+              {cardSuccess && (
+                <span className="flex items-center gap-1.5 text-sm font-medium text-green-700">
+                  <CheckCircle2 className="h-4 w-4" />
+                  {cardSuccess}
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Password card */}

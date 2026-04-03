@@ -52,7 +52,7 @@ export default function CalendarPage() {
   const totalHours = completedSessions.reduce((sum, s) => sum + s.durationMinutes / 60, 0);
 
   return (
-    <div>
+    <div className="max-w-5xl mx-auto">
       <div className="flex items-start justify-between mb-6 gap-4">
         <div>
           <h1

@@ -186,7 +186,7 @@ export default function ProjectsPage() {
     if (!confirm(`Delete "${project.name}"? This cannot be undone.`)) return;
     setMenuOpen(null);
     try {
-      await deleteProject(project.id);
+      await deleteProject(project.id, user!.uid);
     } catch (err) {
       setDeleteError(
         err instanceof Error && err.message.includes("permission")
@@ -213,7 +213,7 @@ export default function ProjectsPage() {
   }
 
   return (
-    <div>
+    <div className="max-w-5xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1
@@ -428,6 +428,7 @@ export default function ProjectsPage() {
         onClose={() => setSessionsProjectId(null)}
         project={projects.find((pr) => pr.id === sessionsProjectId) ?? null}
         userId={user?.uid ?? ""}
+        allProjects={projects}
       />
 
       {menuOpen && (

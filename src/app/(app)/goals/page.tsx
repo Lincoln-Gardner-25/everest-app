@@ -92,7 +92,7 @@ export default function GoalsPage() {
 
   if (loading) {
     return (
-      <div>
+      <div className="max-w-4xl mx-auto">
         <h1
           className="text-3xl font-bold text-foreground mb-1"
           style={{ fontFamily: "var(--font-libre-baskerville)" }}
@@ -105,7 +105,7 @@ export default function GoalsPage() {
   }
 
   return (
-    <div>
+    <div className="max-w-lg mx-auto">
       {/* Header */}
       <div className="flex items-start justify-between mb-8 gap-4">
         <div>
@@ -133,7 +133,7 @@ export default function GoalsPage() {
         </div>
       </div>
 
-      <div className="max-w-lg space-y-6">
+      <div className="space-y-6">
         {/* Income Goals card */}
         <div className="rounded-2xl border bg-card p-6 space-y-5">
           <div>

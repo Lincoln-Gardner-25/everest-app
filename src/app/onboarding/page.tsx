@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { db } from "@/lib/firebase";
@@ -8,7 +8,14 @@ import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Mountain, CheckCircle2 } from "lucide-react";
+import { Mountain, CheckCircle2, CreditCard, Loader2 } from "lucide-react";
+import { loadStripe, type Stripe } from "@stripe/stripe-js";
+import {
+  Elements,
+  CardElement,
+  useStripe,
+  useElements,
+} from "@stripe/react-stripe-js";
 
 const SPECIALTIES = [
   "Wedding",
@@ -21,6 +28,180 @@ const SPECIALTIES = [
   "Other",
 ];
 
+// Lazy-load Stripe outside component to avoid re-creating on render
+let stripePromise: Promise<Stripe | null> | null = null;
+function getStripePromise() {
+  if (!stripePromise) {
+    const key = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
+    stripePromise = key ? loadStripe(key) : Promise.resolve(null);
+  }
+  return stripePromise;
+}
+
+// ---------- Step 4 inner form (needs Stripe context) ----------
+function PaymentForm({
+  onSuccess,
+  onSkip,
+}: {
+  onSuccess: () => void;
+  onSkip: () => void;
+}) {
+  const { user } = useAuth();
+  const stripe = useStripe();
+  const elements = useElements();
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [clientSecret, setClientSecret] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  // Fetch SetupIntent client secret on mount
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchSecret() {
+      if (!user) return;
+      try {
+        const token = await user.getIdToken();
+        const res = await fetch("/api/stripe/setup-intent", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error("Failed to create setup intent");
+        const data = await res.json();
+        if (!cancelled) {
+          setClientSecret(data.clientSecret);
+          setLoading(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setError("Could not initialize payment form. You can skip for now.");
+          setLoading(false);
+        }
+      }
+    }
+    fetchSecret();
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!stripe || !elements || !clientSecret) return;
+
+    setSubmitting(true);
+    setError("");
+
+    const cardElement = elements.getElement(CardElement);
+    if (!cardElement) {
+      setError("Card element not found.");
+      setSubmitting(false);
+      return;
+    }
+
+    const { error: stripeError } = await stripe.confirmCardSetup(clientSecret, {
+      payment_method: { card: cardElement },
+    });
+
+    if (stripeError) {
+      setError(stripeError.message ?? "Something went wrong.");
+      setSubmitting(false);
+      return;
+    }
+
+    onSuccess();
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1
+          className="text-3xl font-bold mb-2"
+          style={{ fontFamily: "var(--font-libre-baskerville)" }}
+        >
+          Add a payment method
+        </h1>
+        <p className="text-muted-foreground">
+          Add a card on file to unlock premium lead searches and enrichment
+          credits. You won&apos;t be charged today.
+        </p>
+      </div>
+
+      <div className="rounded-xl border bg-card p-6 space-y-5">
+        <div className="flex items-center gap-3 mb-2">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+            <CreditCard className="h-5 w-5 text-primary" />
+          </div>
+          <div>
+            <p className="font-medium text-foreground text-sm">
+              Secure card setup
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Powered by Stripe. Your card details are encrypted end-to-end.
+            </p>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-6 w-6 animate-spin text-primary" />
+            <span className="ml-2 text-sm text-muted-foreground">
+              Setting up secure form...
+            </span>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit}>
+            <div className="space-y-4">
+              <div className="rounded-lg border border-border p-4 bg-background">
+                <CardElement
+                  options={{
+                    style: {
+                      base: {
+                        fontSize: "16px",
+                        color: "#1F2937",
+                        fontFamily: "Inter, system-ui, sans-serif",
+                        "::placeholder": { color: "#9CA3AF" },
+                      },
+                      invalid: { color: "#EF4444" },
+                    },
+                  }}
+                />
+              </div>
+
+              {error && (
+                <p className="text-sm text-destructive">{error}</p>
+              )}
+
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={submitting || !stripe || !clientSecret}
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    Saving card...
+                  </>
+                ) : (
+                  "Save Payment Method"
+                )}
+              </Button>
+            </div>
+          </form>
+        )}
+      </div>
+
+      <button
+        type="button"
+        onClick={onSkip}
+        className="w-full text-center text-sm text-muted-foreground hover:text-foreground transition-colors underline underline-offset-4"
+      >
+        Skip for now
+      </button>
+    </div>
+  );
+}
+
+// ---------- Main onboarding page ----------
 export default function OnboardingPage() {
   const { user } = useAuth();
   const router = useRouter();
@@ -47,7 +228,8 @@ export default function OnboardingPage() {
     );
   }
 
-  async function finish() {
+  // Save profile to Firestore, then advance to Step 4
+  async function saveAndContinue() {
     if (!user) return;
     setSaving(true);
     setError("");
@@ -59,15 +241,34 @@ export default function OnboardingPage() {
         yearlyGoal: monthly * 12,
         targetHourlyRate: rate,
         specialty: specialties,
-        onboardingComplete: true,
+        onboardingComplete: false,
+        balance: 0,
         createdAt: serverTimestamp(),
       });
-      router.push("/dashboard");
+      setStep(4);
     } catch {
       setError("Failed to save. Please try again.");
+    } finally {
       setSaving(false);
     }
   }
+
+  // Mark onboarding complete and go to dashboard
+  const completeOnboarding = useCallback(async () => {
+    if (!user) return;
+    try {
+      await setDoc(
+        doc(db, "users", user.uid),
+        { onboardingComplete: true },
+        { merge: true }
+      );
+    } catch {
+      // Non-blocking — user can still proceed
+    }
+    router.push("/dashboard");
+  }, [user, router]);
+
+  const TOTAL_STEPS = 4;
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-background p-6">
@@ -87,7 +288,7 @@ export default function OnboardingPage() {
 
         {/* Step indicators */}
         <div className="flex items-center gap-2 mb-8">
-          {[1, 2, 3].map((s) => (
+          {Array.from({ length: TOTAL_STEPS }, (_, i) => i + 1).map((s) => (
             <div key={s} className="flex items-center gap-2">
               <div
                 className={`h-7 w-7 rounded-full flex items-center justify-center text-xs font-semibold transition-colors ${
@@ -100,7 +301,13 @@ export default function OnboardingPage() {
               >
                 {step > s ? <CheckCircle2 className="h-4 w-4" /> : s}
               </div>
-              {s < 3 && <div className={`h-px w-12 ${step > s ? "bg-primary" : "bg-border"}`} />}
+              {s < TOTAL_STEPS && (
+                <div
+                  className={`h-px w-8 ${
+                    step > s ? "bg-primary" : "bg-border"
+                  }`}
+                />
+              )}
             </div>
           ))}
         </div>
@@ -221,7 +428,7 @@ export default function OnboardingPage() {
           </div>
         )}
 
-        {/* Step 3 — Ready */}
+        {/* Step 3 — Confirm */}
         {step === 3 && (
           <div className="space-y-6">
             <div>
@@ -275,11 +482,21 @@ export default function OnboardingPage() {
               <Button variant="outline" className="flex-1" onClick={() => setStep(2)}>
                 Back
               </Button>
-              <Button className="flex-1" onClick={finish} disabled={saving}>
-                {saving ? "Saving…" : "Go to Dashboard"}
+              <Button className="flex-1" onClick={saveAndContinue} disabled={saving}>
+                {saving ? "Saving..." : "Continue"}
               </Button>
             </div>
           </div>
+        )}
+
+        {/* Step 4 — Payment method */}
+        {step === 4 && (
+          <Elements stripe={getStripePromise()}>
+            <PaymentForm
+              onSuccess={completeOnboarding}
+              onSkip={completeOnboarding}
+            />
+          </Elements>
         )}
       </div>
     </div>

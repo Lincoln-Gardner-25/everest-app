@@ -56,10 +56,14 @@ export async function completeProject(projectId: string) {
   });
 }
 
-export async function deleteProject(projectId: string) {
-  // Delete all sessions for this project, then the project itself, in one batch
+export async function deleteProject(projectId: string, userId: string) {
+  // Delete all sessions for this project + user, then the project itself, in one batch
   const sessionsSnap = await getDocs(
-    query(collection(db, "sessions"), where("projectId", "==", projectId))
+    query(
+      collection(db, "sessions"),
+      where("projectId", "==", projectId),
+      where("userId", "==", userId)
+    )
   );
   const batch = writeBatch(db);
   sessionsSnap.docs.forEach((d) => batch.delete(d.ref));

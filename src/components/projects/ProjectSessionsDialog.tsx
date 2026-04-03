@@ -10,9 +10,12 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Plus, Pencil, Trash2, Clock, X, Check } from "lucide-react";
+import { Plus, Pencil, Trash2, Clock, X, Check, Play, Square } from "lucide-react";
 import {
   subscribeToProjectSessions,
+  subscribeToActiveSession,
+  clockIn,
+  clockOut,
   createManualSession,
   updateSession,
   deleteSession,
@@ -26,6 +29,21 @@ interface Props {
   onClose: () => void;
   project: Project | null;
   userId: string;
+  allProjects?: Project[];
+}
+
+// Firestore resolves serverTimestamp() asynchronously — the first local
+// snapshot may have startTime as null. This guard prevents calling
+// toMillis() on a pending FieldValue.
+function isValidTimestamp(ts: unknown): ts is { toMillis: () => number } {
+  return ts != null && typeof (ts as { toMillis?: unknown }).toMillis === "function";
+}
+
+function formatElapsed(totalSeconds: number): string {
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
 function formatHours(h: number) {
@@ -79,7 +97,7 @@ interface FormState {
 
 const EMPTY_FORM: FormState = { date: "", hours: "", notes: "" };
 
-export function ProjectSessionsDialog({ open, onClose, project, userId }: Props) {
+export function ProjectSessionsDialog({ open, onClose, project, userId, allProjects }: Props) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingSession, setEditingSession] = useState<Session | null>(null);
@@ -90,7 +108,42 @@ export function ProjectSessionsDialog({ open, onClose, project, userId }: Props)
   const hoursRef = useRef<HTMLInputElement>(null);
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
+  // Clock in/out state
+  const [activeSession, setActiveSession] = useState<Session | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [clockLoading, setClockLoading] = useState(false);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const projectId = project?.id;
+
+  // Subscribe to active session (any project) for this user
+  useEffect(() => {
+    if (!open || !userId) return;
+    return subscribeToActiveSession(userId, setActiveSession, (err) => {
+      console.error("subscribeToActiveSession error:", err);
+    });
+  }, [open, userId]);
+
+  // Live elapsed timer
+  useEffect(() => {
+    if (intervalRef.current) clearInterval(intervalRef.current);
+
+    if (activeSession && activeSession.projectId === projectId && isValidTimestamp(activeSession.startTime)) {
+      const tick = () => {
+        const startMs = (activeSession.startTime as { toMillis: () => number }).toMillis();
+        setElapsedSeconds(Math.floor((Date.now() - startMs) / 1000));
+      };
+      tick();
+      intervalRef.current = setInterval(tick, 1000);
+    } else {
+      setElapsedSeconds(0);
+    }
+
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [activeSession, projectId]);
+
   useEffect(() => {
     if (!open || !projectId) return;
     return subscribeToProjectSessions(projectId, userId, setSessions, (err) => {
@@ -223,6 +276,38 @@ export function ProjectSessionsDialog({ open, onClose, project, userId }: Props)
     }
   }
 
+  async function handleClockIn() {
+    if (!project) return;
+    setClockLoading(true);
+    try {
+      await clockIn(userId, project.id);
+    } catch (e) {
+      console.error("Clock in error:", e);
+    } finally {
+      setClockLoading(false);
+    }
+  }
+
+  async function handleClockOut() {
+    if (!activeSession || !project) return;
+    if (!isValidTimestamp(activeSession.startTime)) return;
+    setClockLoading(true);
+    try {
+      await clockOut(activeSession.id, project.id, activeSession.startTime as Timestamp);
+    } catch (e) {
+      console.error("Clock out error:", e);
+    } finally {
+      setClockLoading(false);
+    }
+  }
+
+  const isClockedInToThis = !!activeSession && activeSession.projectId === projectId;
+  const isClockedInToOther = !!activeSession && activeSession.projectId !== projectId;
+  const otherProjectName = isClockedInToOther && allProjects
+    ? allProjects.find((p) => p.id === activeSession.projectId)?.name ?? "another project"
+    : "another project";
+  const startTimeReady = isClockedInToThis && isValidTimestamp(activeSession?.startTime);
+
   const completedSessions = sessions.filter((s) => s.endTime !== null);
   const activeSessions = sessions.filter((s) => s.endTime === null);
 
@@ -241,6 +326,43 @@ export function ProjectSessionsDialog({ open, onClose, project, userId }: Props)
           </DialogTitle>
           <p className="text-sm text-muted-foreground">{p.clientName} · {p.projectType}</p>
         </DialogHeader>
+
+        {/* Clock In/Out */}
+        {p.status === "active" && (
+          <div className="mt-1">
+            {isClockedInToThis ? (
+              <Button
+                className="w-full h-12 text-base font-semibold bg-red-600 hover:bg-red-700 text-white"
+                onClick={handleClockOut}
+                disabled={clockLoading || !startTimeReady}
+              >
+                <Square className="h-4 w-4 mr-2" />
+                {startTimeReady
+                  ? <>Clock Out — <span className="font-mono">{formatElapsed(elapsedSeconds)}</span></>
+                  : "Starting..."}
+              </Button>
+            ) : isClockedInToOther ? (
+              <Button
+                className="w-full h-12 text-base font-semibold"
+                variant="outline"
+                disabled
+              >
+                <Clock className="h-4 w-4 mr-2" />
+                Currently clocked in to {otherProjectName}
+              </Button>
+            ) : (
+              <Button
+                className="w-full h-12 text-base font-semibold bg-emerald-600 hover:bg-emerald-700 text-white"
+                onClick={handleClockIn}
+                disabled={clockLoading}
+              >
+                <Play className="h-4 w-4 mr-2" />
+                Clock In to {p.name}
+              </Button>
+            )}
+            <div className="border-b mt-4 mb-1" />
+          </div>
+        )}
 
         {/* Stats */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-1">
