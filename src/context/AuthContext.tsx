@@ -75,35 +75,48 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  /** Get a Gmail access token without changing the signed-in Firebase user.
-   *  We sign in to Google in a second Auth instance so the primary auth state is untouched. */
+  /** Get a Gmail access token WITHOUT changing the signed-in Firebase user.
+   *  Uses Google Identity Services (GIS) token flow — completely bypasses Firebase auth. */
   async function connectGmail(): Promise<string | null> {
-    // Use a temporary, isolated auth reference so signInWithPopup doesn't
-    // overwrite the current user on the primary `auth` instance.
-    const { initializeApp, deleteApp } = await import("firebase/app");
-    const { getAuth: getTempAuth, signInWithPopup: tempSignIn, GoogleAuthProvider: TempGoogleProvider } = await import("firebase/auth");
-
-    const tempApp = initializeApp(auth.app.options, "gmail-temp-" + Date.now());
-    const tempAuth = getTempAuth(tempApp);
-
-    try {
-      const provider = new TempGoogleProvider();
-      provider.addScope("https://www.googleapis.com/auth/gmail.readonly");
-      // Hint the user's current email so the popup pre-selects the right account
-      if (user?.email) {
-        provider.setCustomParameters({ login_hint: user.email });
-      }
-      const result = await tempSignIn(tempAuth, provider);
-      const credential = TempGoogleProvider.credentialFromResult(result);
-      if (credential?.accessToken) {
-        setGmailAccessToken(credential.accessToken);
-        sessionStorage.setItem(GMAIL_TOKEN_KEY, credential.accessToken);
-        return credential.accessToken;
-      }
-      return null;
-    } finally {
-      await deleteApp(tempApp);
+    // Dynamically load the GIS script if not already present
+    if (!document.querySelector('script[src="https://accounts.google.com/gsi/client"]')) {
+      await new Promise<void>((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = "https://accounts.google.com/gsi/client";
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error("Failed to load Google Identity Services"));
+        document.head.appendChild(script);
+      });
     }
+
+    // Wait for google.accounts to be available
+    const g = (window as unknown as { google: { accounts: { oauth2: {
+      initTokenClient: (config: {
+        client_id: string;
+        scope: string;
+        hint?: string;
+        callback: (resp: { access_token?: string; error?: string }) => void;
+      }) => { requestAccessToken: () => void };
+    } } } }).google;
+
+    return new Promise((resolve) => {
+      const client = g.accounts.oauth2.initTokenClient({
+        client_id: process.env.NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID || "",
+        scope: "https://www.googleapis.com/auth/gmail.readonly",
+        hint: user?.email || undefined,
+        callback: (response) => {
+          if (response.access_token) {
+            setGmailAccessToken(response.access_token);
+            sessionStorage.setItem(GMAIL_TOKEN_KEY, response.access_token);
+            resolve(response.access_token);
+          } else {
+            console.error("Gmail token error:", response.error);
+            resolve(null);
+          }
+        },
+      });
+      client.requestAccessToken();
+    });
   }
 
   async function signOut() {
