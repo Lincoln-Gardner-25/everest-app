@@ -1250,7 +1250,7 @@ export default function LeadsPage() {
               </div>
             )}
 
-            {error && (
+            {error && !isFree && (
               <p className="text-sm text-destructive">{error}</p>
             )}
 

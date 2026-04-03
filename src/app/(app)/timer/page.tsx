@@ -171,7 +171,6 @@ export default function TimerPage() {
   const completedSessions = projectSessions.filter((s) => s.endTime !== null);
 
   return (
-    <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center">
     <div className="max-w-4xl mx-auto w-full">
       <div className="mb-6">
         <h1
@@ -304,7 +303,6 @@ export default function TimerPage() {
           )}
         </div>
       )}
-    </div>
     </div>
   );
 }
