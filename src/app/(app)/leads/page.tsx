@@ -371,8 +371,8 @@ export default function LeadsPage() {
       setDuplicatesRemoved(data.duplicatesRemoved ?? 0);
       setActiveCoupon(null); // Clear coupon after use
 
-      // Save to Firestore
-      await saveLeadSearch(user.uid, {
+      // Save to Firestore (non-blocking — don't let save failures hide results)
+      saveLeadSearch(user.uid, {
         location: location.trim(),
         radiusMiles: radius.miles,
         radiusMeters: radius.meters,
@@ -380,10 +380,10 @@ export default function LeadsPage() {
         centerLat: data.centerLat,
         centerLng: data.centerLng,
         leads: data.leads,
-      });
-
-      const updated = await getPastSearches(user.uid);
-      setPastSearches(updated);
+      })
+        .then(() => getPastSearches(user.uid))
+        .then(setPastSearches)
+        .catch((err) => console.error("Failed to save search:", err));
 
       // Trigger enrichment
       if (data.leads.length > 0 && (enrichment.youtube || enrichment.braveSearch || enrichment.apollo || enrichment.hunter)) {
@@ -1250,7 +1250,7 @@ export default function LeadsPage() {
               </div>
             )}
 
-            {error && !isFree && (
+            {error && !(isFree && error.includes("payment method")) && (
               <p className="text-sm text-destructive">{error}</p>
             )}
 
