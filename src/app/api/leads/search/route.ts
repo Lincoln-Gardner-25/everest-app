@@ -3,26 +3,31 @@ import { adminAuth, adminDb } from "@/lib/firebase-admin";
 import { getStripe } from "@/lib/stripe";
 
 import { calculateSearchCost, dollarsToCents, type EnrichmentOptions } from "@/lib/pricing";
+import { FieldValue } from "firebase-admin/firestore";
 
 function getGoogleKey() { return process.env.GOOGLE_PLACES_API_KEY || ""; }
 
-// ── Rate limiting (in-memory, per-user) ─────────────────────────────
+// ── Rate limiting (Firestore-backed, per-user) ─────────────────────
 const MAX_REQUESTS_PER_HOUR = 10;
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 
-function checkRateLimit(userId: string): boolean {
+async function checkRateLimit(userId: string): Promise<boolean> {
   const now = Date.now();
-  const entry = rateLimitMap.get(userId);
+  const docRef = adminDb.doc(`rateLimits/search_${userId}`);
 
-  if (!entry || now > entry.resetAt) {
-    rateLimitMap.set(userId, { count: 1, resetAt: now + 60 * 60 * 1000 });
+  return adminDb.runTransaction(async (tx) => {
+    const snap = await tx.get(docRef);
+    const data = snap.data();
+
+    if (!data || now > data.resetAt) {
+      tx.set(docRef, { count: 1, resetAt: now + 60 * 60 * 1000 });
+      return true;
+    }
+
+    if (data.count >= MAX_REQUESTS_PER_HOUR) return false;
+
+    tx.update(docRef, { count: FieldValue.increment(1) });
     return true;
-  }
-
-  if (entry.count >= MAX_REQUESTS_PER_HOUR) return false;
-
-  entry.count++;
-  return true;
+  });
 }
 
 // ── Input validation constants ──────────────────────────────────────
@@ -196,8 +201,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid or expired token" }, { status: 401 });
     }
 
-    // Rate limit: max 10 searches per hour per user
-    if (!checkRateLimit(userId)) {
+    // Rate limit: max 10 searches per hour per user (Firestore-backed)
+    if (!(await checkRateLimit(userId))) {
       return NextResponse.json(
         { error: "Rate limit exceeded. Max 10 searches per hour." },
         { status: 429 }
@@ -205,13 +210,12 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { location, radiusMeters, categories, maxLeads, enrichmentOptions, couponCode: requestCoupon } = body as {
+    const { location, radiusMeters, categories, maxLeads, enrichmentOptions } = body as {
       location: string;
       radiusMeters: number;
       categories: string[];
       maxLeads?: number;
       enrichmentOptions?: EnrichmentOptions;
-      couponCode?: string;
     };
 
     // ── Input validation FIRST (before payment, so invalid requests aren't charged) ──
@@ -240,7 +244,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ── Payment gate: per-search coupon OR server-side Stripe charge ──
+    // ── Payment gate: server-side Stripe charge ──
     const enrichment = enrichmentOptions ?? { youtube: true, braveSearch: true, apollo: true, hunter: true };
     const leadCount = maxLeads ?? 25;
 
@@ -248,81 +252,77 @@ export async function POST(req: NextRequest) {
     const userSnap = await userRef.get();
     const userData = userSnap.data() || {};
 
-    // Validate coupon code server-side only (codes never sent to client)
-    const VALID_CODES = new Set(["TRY_FOR_FREE", "EVEREST-FREE", "EVEREST-BETA", "VIDEOGRAPHER-2026"]);
-    const hasValidCoupon = !!requestCoupon && VALID_CODES.has(requestCoupon.trim().toUpperCase());
-    const isFree = hasValidCoupon;
+    // Calculate cost server-side — never trust the client
+    const { total: costDollars } = calculateSearchCost(leadCount, enrichment);
+    const costCents = dollarsToCents(costDollars);
+    const chargeAmount = Math.max(50, costCents); // Stripe minimum is 50 cents
 
-    if (!isFree) {
-      // Calculate cost server-side — never trust the client
-      const { total: costDollars } = calculateSearchCost(leadCount, enrichment);
-      const costCents = dollarsToCents(costDollars);
-      const chargeAmount = Math.max(50, costCents); // Stripe minimum is 50 cents
+    if (!userData.stripeCustomerId) {
+      return NextResponse.json(
+        { error: "No payment method on file. Please add a card in Settings." },
+        { status: 402 }
+      );
+    }
 
-      if (!userData.stripeCustomerId) {
+    // Charge the card server-side before proceeding with the search
+    let paymentIntentId: string | null = null;
+    try {
+      const stripe = getStripe();
+      const paymentMethods = await stripe.paymentMethods.list({
+        customer: userData.stripeCustomerId,
+        type: "card",
+        limit: 1,
+      });
+
+      if (paymentMethods.data.length === 0) {
         return NextResponse.json(
           { error: "No payment method on file. Please add a card in Settings." },
           { status: 402 }
         );
       }
 
-      // Charge the card server-side before proceeding with the search
-      try {
-        const stripe = getStripe();
-        const paymentMethods = await stripe.paymentMethods.list({
-          customer: userData.stripeCustomerId,
-          type: "card",
-          limit: 1,
-        });
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: chargeAmount,
+        currency: "usd",
+        customer: userData.stripeCustomerId,
+        payment_method: paymentMethods.data[0].id,
+        off_session: true,
+        confirm: true,
+        description: `Everest Leads: ${leadCount} leads in ${location}`,
+        metadata: {
+          firebaseUserId: userId,
+          searchLocation: location,
+          leadCount: String(leadCount),
+        },
+      });
 
-        if (paymentMethods.data.length === 0) {
-          return NextResponse.json(
-            { error: "No payment method on file. Please add a card in Settings." },
-            { status: 402 }
-          );
-        }
-
-        const paymentIntent = await stripe.paymentIntents.create({
-          amount: chargeAmount,
-          currency: "usd",
-          customer: userData.stripeCustomerId,
-          payment_method: paymentMethods.data[0].id,
-          off_session: true,
-          confirm: true,
-          description: `Everest Leads: ${leadCount} leads in ${location}`,
-          metadata: {
-            firebaseUserId: userId,
-            searchLocation: location,
-            leadCount: String(leadCount),
-          },
-        });
-
-        if (paymentIntent.status !== "succeeded") {
-          return NextResponse.json(
-            { error: "Payment was not completed. Please check your card in Settings." },
-            { status: 402 }
-          );
-        }
-      } catch (err) {
-        // Handle Stripe card errors specifically
-        if (
-          err &&
-          typeof err === "object" &&
-          "type" in err &&
-          (err as { type: string }).type === "StripeCardError"
-        ) {
-          const stripeErr = err as unknown as { message: string };
-          return NextResponse.json(
-            { error: stripeErr.message },
-            { status: 402 }
-          );
-        }
-        console.error("Server-side charge error:", err);
+      if (paymentIntent.status !== "succeeded") {
         return NextResponse.json(
-          { error: "Payment failed. Please try again or check your card in Settings." },
+          { error: "Payment was not completed. Please check your card in Settings." },
           { status: 402 }
         );
       }
+
+      paymentIntentId = paymentIntent.id;
+    } catch (err) {
+      // Handle Stripe card errors specifically
+      if (
+        err &&
+        typeof err === "object" &&
+        "type" in err &&
+        (err as { type: string }).type === "StripeCardError"
+      ) {
+        const stripeErr = err as unknown as { message: string };
+        return NextResponse.json(
+          { error: stripeErr.message },
+          { status: 402 }
+        );
+      }
+      console.error("Server-side charge error:", err);
+      return NextResponse.json(
+        { error: "Payment failed. Please try again or check your card in Settings." },
+        { status: 402 }
+      );
     }
 
     // A. Geocode using Places API text search
@@ -449,7 +449,23 @@ export async function POST(req: NextRequest) {
       };
     });
 
-    // D. Return
+    // D. Log search cost to Firestore for audit trail
+    try {
+      await adminDb.collection("searchCharges").add({
+        userId,
+        location,
+        leadCount: scoredLeads.length,
+        costCents: chargeAmount,
+        paymentIntentId,
+        enrichmentOptions: enrichment,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    } catch (logErr) {
+      console.error("Failed to log search charge:", logErr);
+      // Don't block the response — charge already succeeded
+    }
+
+    // E. Return
     return NextResponse.json({
       centerLat: lat,
       centerLng: lng,

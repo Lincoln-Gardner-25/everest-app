@@ -102,6 +102,19 @@ leadSearches/{searchId}
   - starLeads: number
   - createdAt: timestamp
   - leads: [{place_id, name, address, phone, website, rating, totalRatings, lat, lng, category, score, reason, isStarLead}]
+
+rateLimits/{type_userId}             ← admin SDK only, no client access
+  - count: number
+  - resetAt: number (epoch ms)
+
+searchCharges/{chargeId}             ← admin SDK only, audit trail for every paid search
+  - userId: string
+  - location: string
+  - leadCount: number
+  - costCents: number
+  - paymentIntentId: string
+  - enrichmentOptions: object
+  - createdAt: timestamp
 ```
 
 ## What's Built

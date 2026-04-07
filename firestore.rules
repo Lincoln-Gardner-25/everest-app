@@ -15,7 +15,7 @@ service cloud.firestore {
       function onlySafeUserFields() {
         let allowed = [
           'monthlyGoal', 'yearlyGoal', 'targetHourlyRate', 'specialty',
-          'onboardingComplete', 'createdAt', 'balance',
+          'onboardingComplete', 'createdAt',
           'importedGmailIds', 'gmailScanEnabled'
         ];
         return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowed)
@@ -39,6 +39,14 @@ service cloud.firestore {
     }
     // Stripe webhook events — admin SDK only (no client access)
     match /stripeWebhookEvents/{eventId} {
+      allow read, write: if false;
+    }
+    // Rate limit counters — admin SDK only
+    match /rateLimits/{docId} {
+      allow read, write: if false;
+    }
+    // Search charge audit log — admin SDK only
+    match /searchCharges/{chargeId} {
       allow read, write: if false;
     }
   }

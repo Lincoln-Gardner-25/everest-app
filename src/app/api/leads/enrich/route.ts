@@ -1,22 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminAuth, adminDb } from "@/lib/firebase-admin";
 import { enrichLeadBatch, type EnrichmentOptions } from "@/lib/enrichment";
+import { FieldValue } from "firebase-admin/firestore";
 
 const MAX_LEADS_PER_REQUEST = 10;
 
 const MAX_ENRICH_PER_HOUR = 5;
-const enrichRateLimitMap = new Map<string, { count: number; resetAt: number }>();
 
-function checkEnrichRateLimit(userId: string): boolean {
+async function checkEnrichRateLimit(userId: string): Promise<boolean> {
   const now = Date.now();
-  const entry = enrichRateLimitMap.get(userId);
-  if (!entry || now > entry.resetAt) {
-    enrichRateLimitMap.set(userId, { count: 1, resetAt: now + 60 * 60 * 1000 });
+  const docRef = adminDb.doc(`rateLimits/enrich_${userId}`);
+
+  return adminDb.runTransaction(async (tx) => {
+    const snap = await tx.get(docRef);
+    const data = snap.data();
+
+    if (!data || now > data.resetAt) {
+      tx.set(docRef, { count: 1, resetAt: now + 60 * 60 * 1000 });
+      return true;
+    }
+
+    if (data.count >= MAX_ENRICH_PER_HOUR) return false;
+
+    tx.update(docRef, { count: FieldValue.increment(1) });
     return true;
-  }
-  if (entry.count >= MAX_ENRICH_PER_HOUR) return false;
-  entry.count++;
-  return true;
+  });
 }
 
 export async function POST(req: NextRequest) {
@@ -35,7 +43,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid or expired token" }, { status: 401 });
     }
 
-    if (!checkEnrichRateLimit(userId)) {
+    if (!(await checkEnrichRateLimit(userId))) {
       return NextResponse.json(
         { error: "Rate limit exceeded. Max 5 enrichment requests per hour." },
         { status: 429 }
@@ -49,7 +57,7 @@ export async function POST(req: NextRequest) {
       searchId?: string;
     };
 
-    // Verify the user owns this search (proves they paid for it or used a valid coupon)
+    // Verify the user owns this search (proves they paid for it)
     if (!searchId || typeof searchId !== "string") {
       return NextResponse.json({ error: "searchId is required" }, { status: 400 });
     }

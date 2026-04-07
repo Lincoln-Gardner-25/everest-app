@@ -20,7 +20,6 @@ import {
   Star,
   Clock,
   Wallet,
-  Ticket,
   Heart,
   Home,
   UtensilsCrossed,
@@ -42,7 +41,6 @@ import {
 } from "lucide-react";
 import { setOptions, importLibrary } from "@googlemaps/js-api-loader";
 import AddFundsDialog from "@/components/leads/AddFundsDialog";
-import InviteCodeDialog from "@/components/leads/InviteCodeDialog";
 import {
   API_COSTS,
   calculateSearchCost,
@@ -180,12 +178,8 @@ export default function LeadsPage() {
   const [pastLoading, setPastLoading] = useState(true);
 
   // Balance + paywall
-  const { balance, loading: balanceLoading, hasInviteCode, hasPaymentMethod } = useBalance(user?.uid);
+  const { balance, loading: balanceLoading, hasPaymentMethod } = useBalance(user?.uid);
   const [showAddFunds, setShowAddFunds] = useState(false);
-  const [showInviteCode, setShowInviteCode] = useState(false);
-  // charging state removed — payment now handled server-side in /api/leads/search
-  // Per-search coupon code (not persisted — must enter each time)
-  const [activeCoupon, setActiveCoupon] = useState<string | null>(null);
 
   // Enrichment state
   const [enriching, setEnriching] = useState(false);
@@ -331,7 +325,7 @@ export default function LeadsPage() {
     setError("");
 
     // Payment is handled server-side in /api/leads/search — no client-side charge needed
-    if (!activeCoupon && !hasInviteCode && !hasPaymentMethod) {
+    if (!hasPaymentMethod) {
       setError("Please add a payment method in Settings before searching.");
       setLoading(false);
       return;
@@ -352,7 +346,6 @@ export default function LeadsPage() {
           categories: clientType.categories,
           maxLeads: numLeads,
           enrichmentOptions: enrichment,
-          couponCode: activeCoupon || undefined,
         }),
       });
 
@@ -369,8 +362,6 @@ export default function LeadsPage() {
       setSearchDone(true);
       setShowResults(true);
       setDuplicatesRemoved(data.duplicatesRemoved ?? 0);
-      setActiveCoupon(null); // Clear coupon after use
-
       // Save to Firestore, then trigger enrichment with the searchId
       saveLeadSearch(user.uid, {
         location: location.trim(),
@@ -530,7 +521,6 @@ export default function LeadsPage() {
     setDuplicatesRemoved(0);
     setShowMap(false);
     setError("");
-    setActiveCoupon(null);
     mapInitializedRef.current = false;
   }
 
@@ -539,8 +529,7 @@ export default function LeadsPage() {
   const starCount = filteredLeads.filter((l) => l.isStarLead).length;
   const { total: totalCost } = calculateSearchCost(numLeads, enrichment);
   const totalCostCents = dollarsToCents(totalCost);
-  const isFree = !!activeCoupon || hasInviteCode;
-  const canProceed = isFree || hasPaymentMethod;
+  const canProceed = hasPaymentMethod;
 
   // Score badge color
   function scoreBadgeClass(score: number): string {
@@ -789,12 +778,6 @@ export default function LeadsPage() {
           balance={balance}
           getIdToken={() => user!.getIdToken()}
         />
-        <InviteCodeDialog
-          open={showInviteCode}
-          onClose={() => setShowInviteCode(false)}
-          getIdToken={() => user!.getIdToken()}
-          onSuccess={(code: string) => { setActiveCoupon(code); setError(""); }}
-        />
       </div>
     );
   }
@@ -812,21 +795,6 @@ export default function LeadsPage() {
             Find Leads
           </h1>
           <p className="text-muted-foreground">Discover businesses that need videography services.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          {activeCoupon && (
-            <div className="flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-700">
-              <Check className="h-3.5 w-3.5" />
-              Coupon applied (1 search)
-            </div>
-          )}
-          <button
-            onClick={() => setShowInviteCode(true)}
-            className="flex items-center gap-1.5 rounded-lg border bg-card px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-          >
-            <Ticket className="h-3 w-3" />
-            {activeCoupon ? "Change code" : "Coupon code"}
-          </button>
         </div>
       </div>
 
@@ -1191,22 +1159,10 @@ export default function LeadsPage() {
             <div className="rounded-xl border-2 border-primary/20 bg-primary/5 p-5 flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Total cost</p>
-                {isFree ? (
-                  <div className="flex items-baseline gap-2">
-                    <p className="text-2xl font-bold text-emerald-600">FREE</p>
-                    <p className="text-sm text-muted-foreground line-through">${totalCost.toFixed(2)}</p>
-                  </div>
-                ) : (
-                  <p className="text-2xl font-bold text-foreground">${totalCost.toFixed(2)}</p>
-                )}
+                <p className="text-2xl font-bold text-foreground">${totalCost.toFixed(2)}</p>
               </div>
               <div className="text-right">
-                {isFree ? (
-                  <div className="flex items-center gap-1.5 text-emerald-600">
-                    <Check className="h-4 w-4" />
-                    <span className="text-sm font-semibold">Coupon applied</span>
-                  </div>
-                ) : hasPaymentMethod ? (
+                {hasPaymentMethod ? (
                   <div className="flex items-center gap-1.5 text-emerald-600">
                     <Check className="h-4 w-4" />
                     <span className="text-sm font-semibold">Card on file</span>
@@ -1218,39 +1174,28 @@ export default function LeadsPage() {
             </div>
 
             {/* No payment method warning */}
-            {!isFree && !hasPaymentMethod && (
+            {!hasPaymentMethod && (
               <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 flex items-start gap-3">
                 <Info className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
                 <div>
                   <p className="text-sm font-medium text-amber-800">No payment method</p>
                   <p className="text-xs text-amber-700 mt-0.5">
-                    Add a card in Settings to purchase leads, or enter a coupon code.
+                    Add a card in Settings to purchase leads.
                   </p>
-                  <div className="flex gap-2 mt-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="text-amber-800 border-amber-300 hover:bg-amber-100"
-                      onClick={() => window.location.href = "/settings"}
-                    >
-                      <Wallet className="h-3.5 w-3.5 mr-1.5" />
-                      Go to Settings
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="text-amber-800 border-amber-300 hover:bg-amber-100"
-                      onClick={() => setShowInviteCode(true)}
-                    >
-                      <Ticket className="h-3.5 w-3.5 mr-1.5" />
-                      Enter Coupon
-                    </Button>
-                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-amber-800 border-amber-300 hover:bg-amber-100 mt-2"
+                    onClick={() => window.location.href = "/settings"}
+                  >
+                    <Wallet className="h-3.5 w-3.5 mr-1.5" />
+                    Go to Settings
+                  </Button>
                 </div>
               </div>
             )}
 
-            {error && !(isFree && error.includes("payment method")) && (
+            {error && (
               <p className="text-sm text-destructive">{error}</p>
             )}
 
@@ -1269,11 +1214,6 @@ export default function LeadsPage() {
                   <>
                     <Loader2 className="h-5 w-5 mr-2 animate-spin" />
                     Searching...
-                  </>
-                ) : isFree ? (
-                  <>
-                    <Search className="h-5 w-5 mr-2" />
-                    Get {numLeads} Leads — Free
                   </>
                 ) : (
                   <>
@@ -1304,12 +1244,6 @@ export default function LeadsPage() {
         onClose={() => setShowAddFunds(false)}
         balance={balance}
         getIdToken={() => user!.getIdToken()}
-      />
-      <InviteCodeDialog
-        open={showInviteCode}
-        onClose={() => setShowInviteCode(false)}
-        getIdToken={() => user!.getIdToken()}
-        onSuccess={() => {}}
       />
     </div>
   );
