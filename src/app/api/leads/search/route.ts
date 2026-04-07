@@ -244,7 +244,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ── Payment gate: server-side Stripe charge ──
+    // ── Payment gate: balance-first, then card fallback ──
     const enrichment = enrichmentOptions ?? { youtube: true, braveSearch: true, apollo: true, hunter: true };
     const leadCount = maxLeads ?? 25;
 
@@ -257,72 +257,100 @@ export async function POST(req: NextRequest) {
     const costCents = dollarsToCents(costDollars);
     const chargeAmount = Math.max(50, costCents); // Stripe minimum is 50 cents
 
-    if (!userData.stripeCustomerId) {
-      return NextResponse.json(
-        { error: "No payment method on file. Please add a card in Settings." },
-        { status: 402 }
-      );
+    let paymentIntentId: string | null = null;
+    let paidVia: "balance" | "card" = "card";
+
+    const currentBalance = userData.balance ?? 0;
+
+    if (currentBalance >= chargeAmount) {
+      // Deduct from balance atomically
+      const deducted = await adminDb.runTransaction(async (tx) => {
+        const freshSnap = await tx.get(userRef);
+        const freshBalance = freshSnap.data()?.balance ?? 0;
+        if (freshBalance < chargeAmount) return false;
+        tx.update(userRef, { balance: FieldValue.increment(-chargeAmount) });
+        tx.create(adminDb.collection("balanceTransactions").doc(), {
+          userId,
+          type: "search_deduction",
+          amountCents: chargeAmount,
+          location,
+          leadCount,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+        return true;
+      });
+
+      if (deducted) {
+        paidVia = "balance";
+      }
     }
 
-    // Charge the card server-side before proceeding with the search
-    let paymentIntentId: string | null = null;
-    try {
-      const stripe = getStripe();
-      const paymentMethods = await stripe.paymentMethods.list({
-        customer: userData.stripeCustomerId,
-        type: "card",
-        limit: 1,
-      });
-
-      if (paymentMethods.data.length === 0) {
+    // If balance didn't cover it, charge the card
+    if (paidVia !== "balance") {
+      if (!userData.stripeCustomerId) {
         return NextResponse.json(
-          { error: "No payment method on file. Please add a card in Settings." },
+          { error: "Insufficient balance and no payment method on file. Please add funds or a card in Settings." },
           { status: 402 }
         );
       }
 
-      const paymentIntent = await stripe.paymentIntents.create({
-        amount: chargeAmount,
-        currency: "usd",
-        customer: userData.stripeCustomerId,
-        payment_method: paymentMethods.data[0].id,
-        off_session: true,
-        confirm: true,
-        description: `Everest Leads: ${leadCount} leads in ${location}`,
-        metadata: {
-          firebaseUserId: userId,
-          searchLocation: location,
-          leadCount: String(leadCount),
-        },
-      });
+      try {
+        const stripe = getStripe();
+        const paymentMethods = await stripe.paymentMethods.list({
+          customer: userData.stripeCustomerId,
+          type: "card",
+          limit: 1,
+        });
 
-      if (paymentIntent.status !== "succeeded") {
+        if (paymentMethods.data.length === 0) {
+          return NextResponse.json(
+            { error: "Insufficient balance and no card on file. Please add funds or a card in Settings." },
+            { status: 402 }
+          );
+        }
+
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount: chargeAmount,
+          currency: "usd",
+          customer: userData.stripeCustomerId,
+          payment_method: paymentMethods.data[0].id,
+          off_session: true,
+          confirm: true,
+          description: `Everest Leads: ${leadCount} leads in ${location}`,
+          metadata: {
+            firebaseUserId: userId,
+            searchLocation: location,
+            leadCount: String(leadCount),
+          },
+        });
+
+        if (paymentIntent.status !== "succeeded") {
+          return NextResponse.json(
+            { error: "Payment was not completed. Please check your card in Settings." },
+            { status: 402 }
+          );
+        }
+
+        paymentIntentId = paymentIntent.id;
+      } catch (err) {
+        if (
+          err &&
+          typeof err === "object" &&
+          "type" in err &&
+          (err as { type: string }).type === "StripeCardError"
+        ) {
+          const stripeErr = err as unknown as { message: string };
+          return NextResponse.json(
+            { error: stripeErr.message },
+            { status: 402 }
+          );
+        }
+        console.error("Server-side charge error:", err);
         return NextResponse.json(
-          { error: "Payment was not completed. Please check your card in Settings." },
+          { error: "Payment failed. Please try again or check your card in Settings." },
           { status: 402 }
         );
       }
-
-      paymentIntentId = paymentIntent.id;
-    } catch (err) {
-      // Handle Stripe card errors specifically
-      if (
-        err &&
-        typeof err === "object" &&
-        "type" in err &&
-        (err as { type: string }).type === "StripeCardError"
-      ) {
-        const stripeErr = err as unknown as { message: string };
-        return NextResponse.json(
-          { error: stripeErr.message },
-          { status: 402 }
-        );
-      }
-      console.error("Server-side charge error:", err);
-      return NextResponse.json(
-        { error: "Payment failed. Please try again or check your card in Settings." },
-        { status: 402 }
-      );
     }
 
     // A. Geocode using Places API text search
@@ -456,6 +484,7 @@ export async function POST(req: NextRequest) {
         location,
         leadCount: scoredLeads.length,
         costCents: chargeAmount,
+        paidVia,
         paymentIntentId,
         enrichmentOptions: enrichment,
         createdAt: FieldValue.serverTimestamp(),

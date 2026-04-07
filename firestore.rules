@@ -49,5 +49,9 @@ service cloud.firestore {
     match /searchCharges/{chargeId} {
       allow read, write: if false;
     }
+    // Balance transactions (deposits, withdrawals, deductions) — admin SDK only
+    match /balanceTransactions/{txId} {
+      allow read, write: if false;
+    }
   }
 }

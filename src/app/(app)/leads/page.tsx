@@ -325,8 +325,8 @@ export default function LeadsPage() {
     setError("");
 
     // Payment is handled server-side in /api/leads/search — no client-side charge needed
-    if (!hasPaymentMethod) {
-      setError("Please add a payment method in Settings before searching.");
+    if (!hasPaymentMethod && balance < 50) {
+      setError("Please add a payment method or funds in Settings before searching.");
       setLoading(false);
       return;
     }
@@ -529,7 +529,7 @@ export default function LeadsPage() {
   const starCount = filteredLeads.filter((l) => l.isStarLead).length;
   const { total: totalCost } = calculateSearchCost(numLeads, enrichment);
   const totalCostCents = dollarsToCents(totalCost);
-  const canProceed = hasPaymentMethod;
+  const canProceed = hasPaymentMethod || balance >= totalCostCents;
 
   // Score badge color
   function scoreBadgeClass(score: number): string {
@@ -1174,13 +1174,13 @@ export default function LeadsPage() {
             </div>
 
             {/* No payment method warning */}
-            {!hasPaymentMethod && (
+            {!canProceed && (
               <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 flex items-start gap-3">
                 <Info className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
                 <div>
-                  <p className="text-sm font-medium text-amber-800">No payment method</p>
+                  <p className="text-sm font-medium text-amber-800">Payment required</p>
                   <p className="text-xs text-amber-700 mt-0.5">
-                    Add a card in Settings to purchase leads.
+                    Add a card or funds in Settings to purchase leads.
                   </p>
                   <Button
                     variant="outline"

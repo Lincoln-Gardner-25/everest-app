@@ -62,6 +62,16 @@ export async function POST(req: NextRequest) {
           { balance: FieldValue.increment(amountCents) },
           { merge: true }
         );
+
+        // Log deposit transaction for refund tracking (withdrawals need this)
+        transaction.create(adminDb.collection("balanceTransactions").doc(), {
+          userId,
+          type: "deposit",
+          amountCents,
+          refundedCents: 0,
+          paymentIntentId: session.payment_intent || session.id,
+          createdAt: FieldValue.serverTimestamp(),
+        });
       });
     } catch (txErr) {
       console.error("Transaction failed for webhook event:", session.id, txErr);

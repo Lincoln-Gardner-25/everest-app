@@ -13,7 +13,8 @@ import { isGmailScanEnabled, setGmailScanEnabled } from "@/lib/gmail";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { CheckCircle2, KeyRound, Mail, CreditCard, Trash2, RefreshCw, Loader2, Plus } from "lucide-react";
+import { CheckCircle2, KeyRound, Mail, CreditCard, Trash2, RefreshCw, Loader2, Plus, Wallet, ArrowDownToLine, ArrowUpFromLine } from "lucide-react";
+import { useBalance } from "@/hooks/useBalance";
 import { loadStripe } from "@stripe/stripe-js";
 import { Elements, CardElement, useStripe, useElements } from "@stripe/react-stripe-js";
 
@@ -102,6 +103,84 @@ function CardForm({ onSuccess }: { onSuccess: () => void }) {
 
 export default function SettingsPage() {
   const { user } = useAuth();
+
+  // Balance
+  const { balance, loading: balanceLoading } = useBalance(user?.uid);
+  const [depositLoading, setDepositLoading] = useState<string | null>(null);
+  const [withdrawAmount, setWithdrawAmount] = useState("");
+  const [withdrawing, setWithdrawing] = useState(false);
+  const [balanceSuccess, setBalanceSuccess] = useState("");
+  const [balanceError, setBalanceError] = useState("");
+
+  // Check for deposit success in URL
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("deposit") === "success") {
+      setBalanceSuccess("Funds added successfully!");
+      setTimeout(() => setBalanceSuccess(""), 5000);
+      window.history.replaceState({}, "", "/settings");
+    }
+  }, []);
+
+  async function handleDeposit(depositId: string) {
+    if (!user) return;
+    setDepositLoading(depositId);
+    setBalanceError("");
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch("/api/stripe/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ depositId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to create checkout");
+      if (data.sessionUrl) window.location.href = data.sessionUrl;
+    } catch (err) {
+      setBalanceError(err instanceof Error ? err.message : "Something went wrong");
+    } finally {
+      setDepositLoading(null);
+    }
+  }
+
+  async function handleWithdraw() {
+    if (!user || withdrawing) return;
+    const dollars = parseFloat(withdrawAmount);
+    if (isNaN(dollars) || dollars < 1) {
+      setBalanceError("Minimum withdrawal is $1.00");
+      return;
+    }
+    const cents = Math.round(dollars * 100);
+    if (cents > balance) {
+      setBalanceError("Amount exceeds your balance");
+      return;
+    }
+    setWithdrawing(true);
+    setBalanceError("");
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch("/api/stripe/withdraw", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ amountCents: cents }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Withdrawal failed");
+      setBalanceSuccess("Withdrawal processed — refund will appear on your card in 5-10 business days.");
+      setWithdrawAmount("");
+      setTimeout(() => setBalanceSuccess(""), 5000);
+    } catch (err) {
+      setBalanceError(err instanceof Error ? err.message : "Withdrawal failed");
+    } finally {
+      setWithdrawing(false);
+    }
+  }
 
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -384,6 +463,105 @@ export default function SettingsPage() {
               )}
             </div>
           )}
+        </div>
+
+        {/* Balance card */}
+        <div className="rounded-2xl border bg-card p-6 space-y-4">
+          <div className="flex items-center gap-2">
+            <Wallet className="h-4 w-4 text-muted-foreground" />
+            <h2 className="font-semibold text-foreground">Balance</h2>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Add funds to pay for lead searches, or withdraw unused funds back to your card.
+          </p>
+
+          {/* Current balance */}
+          <div className="rounded-xl border-2 border-primary/20 bg-primary/5 px-5 py-4">
+            <p className="text-sm text-muted-foreground">Available balance</p>
+            {balanceLoading ? (
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground mt-1" />
+            ) : (
+              <p className="text-3xl font-bold text-foreground">${(balance / 100).toFixed(2)}</p>
+            )}
+          </div>
+
+          {/* Add Funds */}
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-foreground flex items-center gap-1.5">
+              <ArrowDownToLine className="h-3.5 w-3.5" />
+              Add Funds
+            </p>
+            <div className="grid grid-cols-4 gap-2">
+              {([
+                { id: "deposit_5", label: "$5" },
+                { id: "deposit_15", label: "$15" },
+                { id: "deposit_30", label: "$30" },
+                { id: "deposit_50", label: "$50" },
+              ] as const).map((opt) => (
+                <Button
+                  key={opt.id}
+                  variant="outline"
+                  size="sm"
+                  disabled={!!depositLoading}
+                  onClick={() => handleDeposit(opt.id)}
+                  className="h-10 font-semibold"
+                >
+                  {depositLoading === opt.id ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    opt.label
+                  )}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          {/* Withdraw Funds */}
+          {balance > 0 && (
+            <div className="space-y-2 border-t pt-4">
+              <p className="text-sm font-medium text-foreground flex items-center gap-1.5">
+                <ArrowUpFromLine className="h-3.5 w-3.5" />
+                Withdraw Funds
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Refunded to your card on file. May take 5-10 business days.
+              </p>
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">$</span>
+                  <Input
+                    type="number"
+                    min="1"
+                    step="0.01"
+                    max={(balance / 100).toFixed(2)}
+                    placeholder="0.00"
+                    value={withdrawAmount}
+                    onChange={(e) => setWithdrawAmount(e.target.value)}
+                    className="pl-7"
+                  />
+                </div>
+                <Button
+                  variant="outline"
+                  onClick={handleWithdraw}
+                  disabled={withdrawing || !withdrawAmount}
+                >
+                  {withdrawing ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    "Withdraw"
+                  )}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {balanceSuccess && (
+            <span className="flex items-center gap-1.5 text-sm font-medium text-green-700">
+              <CheckCircle2 className="h-4 w-4" />
+              {balanceSuccess}
+            </span>
+          )}
+          {balanceError && <p className="text-sm text-destructive">{balanceError}</p>}
         </div>
 
         {/* Password card */}

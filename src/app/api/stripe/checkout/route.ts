@@ -79,8 +79,8 @@ export async function POST(req: NextRequest) {
         depositId: option.id,
         amountCents: String(option.amount),
       },
-      success_url: `${baseUrl}/leads?purchase=success`,
-      cancel_url: `${baseUrl}/leads?purchase=cancelled`,
+      success_url: `${baseUrl}/settings?deposit=success`,
+      cancel_url: `${baseUrl}/settings?deposit=cancelled`,
     });
 
     return NextResponse.json({ sessionUrl: session.url });
