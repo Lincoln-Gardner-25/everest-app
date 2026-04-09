@@ -7,7 +7,8 @@ import {
   updatePassword,
   sendPasswordResetEmail,
 } from "firebase/auth";
-import { auth } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
+import { doc, setDoc } from "firebase/firestore";
 import { useAuth } from "@/context/AuthContext";
 import { isGmailScanEnabled, setGmailScanEnabled } from "@/lib/gmail";
 import { Button } from "@/components/ui/button";
@@ -440,11 +441,15 @@ export default function SettingsPage() {
               ) : (
                 <Elements stripe={stripePromise}>
                   <CardForm
-                    onSuccess={() => {
+                    onSuccess={async () => {
                       setShowCardForm(false);
                       setCardSuccess("Card saved successfully");
                       setTimeout(() => setCardSuccess(""), 3000);
                       fetchCard();
+                      // Mark card as present in Firestore for real-time UI updates
+                      if (user) {
+                        await setDoc(doc(db, "users", user.uid), { hasCard: true }, { merge: true });
+                      }
                     }}
                   />
                   <button

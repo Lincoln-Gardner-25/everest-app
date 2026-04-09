@@ -92,6 +92,9 @@ export async function DELETE(req: NextRequest) {
       await stripe.paymentMethods.detach(pm.id);
     }
 
+    // Mark card as removed in Firestore so client UI updates in real-time
+    await adminDb.doc(`users/${userId}`).set({ hasCard: false }, { merge: true });
+
     return NextResponse.json({ success: true });
   } catch (err) {
     console.error("Delete payment method error:", err);

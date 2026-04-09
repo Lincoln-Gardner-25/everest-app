@@ -23,7 +23,7 @@ export function useBalance(userId: string | undefined) {
         if (snap.exists()) {
           const data = snap.data();
           setBalance(data.balance ?? 0);
-          setHasPaymentMethod(!!data.stripeCustomerId);
+          setHasPaymentMethod(!!data.hasCard);
           setStripeCustomerId(data.stripeCustomerId ?? null);
         } else {
           setBalance(0);

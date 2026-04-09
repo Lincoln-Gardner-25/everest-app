@@ -40,7 +40,6 @@ import {
   Check,
 } from "lucide-react";
 import { setOptions, importLibrary } from "@googlemaps/js-api-loader";
-import AddFundsDialog from "@/components/leads/AddFundsDialog";
 import {
   API_COSTS,
   calculateSearchCost,
@@ -179,7 +178,6 @@ export default function LeadsPage() {
 
   // Balance + paywall
   const { balance, loading: balanceLoading, hasPaymentMethod } = useBalance(user?.uid);
-  const [showAddFunds, setShowAddFunds] = useState(false);
 
   // Enrichment state
   const [enriching, setEnriching] = useState(false);
@@ -192,14 +190,6 @@ export default function LeadsPage() {
   const circleRef = useRef<google.maps.Circle | null>(null);
   const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
   const mapInitializedRef = useRef(false);
-
-  // Check for purchase success in URL
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("purchase") === "success") {
-      window.history.replaceState({}, "", "/leads");
-    }
-  }, []);
 
   // ── Load past searches ──────────────────────────────────────────
   useEffect(() => {
@@ -323,13 +313,6 @@ export default function LeadsPage() {
 
     setLoading(true);
     setError("");
-
-    // Payment is handled server-side in /api/leads/search — no client-side charge needed
-    if (!hasPaymentMethod && balance < 50) {
-      setError("Please add a payment method or funds in Settings before searching.");
-      setLoading(false);
-      return;
-    }
 
     try {
       const radius = RADIUS_OPTIONS[radiusIdx];
@@ -771,13 +754,6 @@ export default function LeadsPage() {
           {renderPastSearches()}
         </div>
 
-        {/* Dialogs */}
-        <AddFundsDialog
-          open={showAddFunds}
-          onClose={() => setShowAddFunds(false)}
-          balance={balance}
-          getIdToken={() => user!.getIdToken()}
-        />
       </div>
     );
   }
@@ -1238,13 +1214,6 @@ export default function LeadsPage() {
         {renderPastSearches()}
       </div>
 
-      {/* Dialogs */}
-      <AddFundsDialog
-        open={showAddFunds}
-        onClose={() => setShowAddFunds(false)}
-        balance={balance}
-        getIdToken={() => user!.getIdToken()}
-      />
     </div>
   );
 
