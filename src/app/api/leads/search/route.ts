@@ -244,6 +244,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // ── Geocode FIRST (before payment, so we don't charge for invalid locations) ──
+    const center = await geocodeLocation(location);
+    if (!center) {
+      return NextResponse.json(
+        { error: "Could not geocode location. Check the location name and try again." },
+        { status: 400 }
+      );
+    }
+    const { lat, lng } = center;
+
     // ── Payment gate: balance-first, then card fallback ──
     const enrichment = enrichmentOptions ?? { youtube: true, braveSearch: true, apollo: true, hunter: true };
     const leadCount = maxLeads ?? 25;
@@ -352,16 +362,6 @@ export async function POST(req: NextRequest) {
         );
       }
     }
-
-    // A. Geocode using Places API text search
-    const center = await geocodeLocation(location);
-    if (!center) {
-      return NextResponse.json(
-        { error: "Could not geocode location. Check the location name and try again." },
-        { status: 400 }
-      );
-    }
-    const { lat, lng } = center;
 
     // B. Collect place_ids from past searches to deduplicate
     const pastPlaceIds = new Set<string>();

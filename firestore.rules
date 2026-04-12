@@ -16,7 +16,7 @@ service cloud.firestore {
         let allowed = [
           'monthlyGoal', 'yearlyGoal', 'targetHourlyRate', 'specialty',
           'onboardingComplete', 'createdAt',
-          'importedGmailIds', 'gmailScanEnabled', 'hasCard'
+          'importedGmailIds', 'gmailScanEnabled'
         ];
         return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowed)
           || (resource == null && request.resource.data.keys().hasOnly(allowed));

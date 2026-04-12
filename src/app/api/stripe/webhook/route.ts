@@ -81,5 +81,46 @@ export async function POST(req: NextRequest) {
     console.log(`Processed checkout session ${session.id} for user ${userId} (${amountCents} cents)`);
   }
 
+  // Handle external refunds (e.g., refunds issued via Stripe dashboard)
+  if (event.type === "charge.refunded") {
+    const charge = event.data.object;
+    const userId = charge.metadata?.firebaseUserId;
+
+    if (userId && charge.amount_refunded > 0) {
+      try {
+        // Get the total amount already tracked to avoid double-counting
+        const eventDocRef = adminDb.doc(`stripeWebhookEvents/${charge.id}_refund_${charge.amount_refunded}`);
+
+        await adminDb.runTransaction(async (transaction) => {
+          const eventDoc = await transaction.get(eventDocRef);
+          if (eventDoc.exists) return; // Already processed
+
+          transaction.set(eventDocRef, {
+            processedAt: FieldValue.serverTimestamp(),
+            userId,
+            type: "external_refund",
+          });
+
+          // Decrement balance by the refunded amount
+          transaction.update(adminDb.doc(`users/${userId}`), {
+            balance: FieldValue.increment(-charge.amount_refunded),
+          });
+
+          transaction.create(adminDb.collection("balanceTransactions").doc(), {
+            userId,
+            type: "external_refund",
+            amountCents: charge.amount_refunded,
+            chargeId: charge.id,
+            createdAt: FieldValue.serverTimestamp(),
+          });
+        });
+
+        console.log(`Processed external refund on charge ${charge.id} for user ${userId} (${charge.amount_refunded} cents)`);
+      } catch (refundErr) {
+        console.error("External refund processing error:", refundErr);
+      }
+    }
+  }
+
   return NextResponse.json({ received: true });
 }

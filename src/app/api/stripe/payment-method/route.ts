@@ -66,6 +66,38 @@ export async function GET(req: NextRequest) {
   }
 }
 
+// Called after SetupIntent succeeds — server verifies card exists before setting hasCard
+export async function POST(req: NextRequest) {
+  try {
+    const authResult = await verifyAuth(req);
+    if (authResult instanceof NextResponse) return authResult;
+    const { userId } = authResult;
+
+    const stripe = getStripe();
+    const userDoc = await adminDb.doc(`users/${userId}`).get();
+    const stripeCustomerId = userDoc.data()?.stripeCustomerId;
+
+    if (!stripeCustomerId) {
+      return NextResponse.json({ error: "No Stripe customer" }, { status: 400 });
+    }
+
+    // Verify a card actually exists on the Stripe customer
+    const paymentMethods = await stripe.paymentMethods.list({
+      customer: stripeCustomerId,
+      type: "card",
+      limit: 1,
+    });
+
+    const hasCard = paymentMethods.data.length > 0;
+    await adminDb.doc(`users/${userId}`).set({ hasCard }, { merge: true });
+
+    return NextResponse.json({ success: true, hasCard });
+  } catch (err) {
+    console.error("Confirm payment method error:", err);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
+
 export async function DELETE(req: NextRequest) {
   try {
     const authResult = await verifyAuth(req);

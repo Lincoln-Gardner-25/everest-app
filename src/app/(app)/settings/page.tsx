@@ -7,8 +7,7 @@ import {
   updatePassword,
   sendPasswordResetEmail,
 } from "firebase/auth";
-import { auth, db } from "@/lib/firebase";
-import { doc, setDoc } from "firebase/firestore";
+import { auth } from "@/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
 import { isGmailScanEnabled, setGmailScanEnabled } from "@/lib/gmail";
 import { Button } from "@/components/ui/button";
@@ -446,9 +445,13 @@ export default function SettingsPage() {
                       setCardSuccess("Card saved successfully");
                       setTimeout(() => setCardSuccess(""), 3000);
                       fetchCard();
-                      // Mark card as present in Firestore for real-time UI updates
+                      // Confirm card server-side (server verifies card exists on Stripe before setting hasCard)
                       if (user) {
-                        await setDoc(doc(db, "users", user.uid), { hasCard: true }, { merge: true });
+                        const token = await user.getIdToken();
+                        await fetch("/api/stripe/payment-method", {
+                          method: "POST",
+                          headers: { Authorization: `Bearer ${token}` },
+                        });
                       }
                     }}
                   />
