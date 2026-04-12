@@ -1,9 +1,5 @@
 import type { NextConfig } from "next";
 
-const nextConfig: NextConfig = {
-  env: {
-    GOOGLE_PLACES_API_KEY: process.env.GOOGLE_PLACES_API_KEY,
-  },
-};
+const nextConfig: NextConfig = {};
 
 export default nextConfig;

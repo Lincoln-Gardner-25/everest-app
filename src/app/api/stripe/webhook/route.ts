@@ -82,9 +82,20 @@ export async function POST(req: NextRequest) {
   }
 
   // Handle external refunds (e.g., refunds issued via Stripe dashboard)
+  // Skip refunds initiated by our withdrawal route (tagged with source: "everest_withdrawal")
   if (event.type === "charge.refunded") {
     const charge = event.data.object;
     const userId = charge.metadata?.firebaseUserId;
+
+    // Check if this refund was initiated by our withdrawal route
+    const refunds = charge.refunds?.data || [];
+    const allFromWithdrawal = refunds.length > 0 && refunds.every(
+      (r) => r.metadata?.source === "everest_withdrawal"
+    );
+    if (allFromWithdrawal) {
+      // Already handled by the withdrawal route — skip to avoid double-deduction
+      return NextResponse.json({ received: true });
+    }
 
     if (userId && charge.amount_refunded > 0) {
       try {

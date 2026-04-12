@@ -91,7 +91,7 @@ export async function POST(req: NextRequest) {
       const refund = await stripe.refunds.create({
         payment_intent: plan.paymentIntentId,
         amount: plan.amount,
-        metadata: { firebaseUserId: userId },
+        metadata: { firebaseUserId: userId, source: "everest_withdrawal" },
       });
       refundIds.push(refund.id);
     }

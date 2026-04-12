@@ -242,7 +242,6 @@ export default function OnboardingPage() {
         targetHourlyRate: rate,
         specialty: specialties,
         onboardingComplete: false,
-        balance: 0,
         createdAt: serverTimestamp(),
       });
       setStep(4);

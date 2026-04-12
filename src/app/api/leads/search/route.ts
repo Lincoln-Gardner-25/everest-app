@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminAuth, adminDb } from "@/lib/firebase-admin";
 import { getStripe } from "@/lib/stripe";
 
-import { calculateSearchCost, dollarsToCents, type EnrichmentOptions } from "@/lib/pricing";
+import { calculateSearchCost, dollarsToCents, LEAD_COUNT_OPTIONS, type EnrichmentOptions } from "@/lib/pricing";
 import { FieldValue } from "firebase-admin/firestore";
 
 function getGoogleKey() { return process.env.GOOGLE_PLACES_API_KEY || ""; }
@@ -240,6 +240,21 @@ export async function POST(req: NextRequest) {
     if (!Array.isArray(categories) || categories.length > MAX_CATEGORIES) {
       return NextResponse.json(
         { error: `Categories must be an array of 1-${MAX_CATEGORIES} items` },
+        { status: 400 }
+      );
+    }
+    const validCategories = Object.keys(CATEGORY_QUERIES);
+    for (const cat of categories) {
+      if (typeof cat !== "string" || !validCategories.includes(cat)) {
+        return NextResponse.json(
+          { error: `Invalid category: ${cat}` },
+          { status: 400 }
+        );
+      }
+    }
+    if (maxLeads !== undefined && !LEAD_COUNT_OPTIONS.includes(maxLeads as typeof LEAD_COUNT_OPTIONS[number])) {
+      return NextResponse.json(
+        { error: `maxLeads must be one of: ${LEAD_COUNT_OPTIONS.join(", ")}` },
         { status: 400 }
       );
     }
