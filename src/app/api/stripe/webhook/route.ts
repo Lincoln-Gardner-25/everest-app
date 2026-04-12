@@ -33,9 +33,10 @@ export async function POST(req: NextRequest) {
     const userId = session.metadata?.userId;
     const amountCents = parseInt(session.metadata?.amountCents || "0", 10);
 
-    if (!userId || !amountCents) {
-      console.error("Webhook missing metadata:", session.metadata);
-      return NextResponse.json({ error: "Missing metadata" }, { status: 400 });
+    if (!userId || isNaN(amountCents) || amountCents <= 0) {
+      console.error("Webhook missing or invalid metadata:", session.metadata);
+      // Return 200 to acknowledge the event and prevent Stripe retries
+      return NextResponse.json({ received: true });
     }
 
     const eventDocRef = adminDb.doc(`stripeWebhookEvents/${session.id}`);

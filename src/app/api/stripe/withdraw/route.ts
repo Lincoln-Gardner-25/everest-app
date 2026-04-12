@@ -22,9 +22,9 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { amountCents } = body as { amountCents: number };
 
-    if (!amountCents || typeof amountCents !== "number" || amountCents < 100) {
+    if (!amountCents || typeof amountCents !== "number" || !Number.isInteger(amountCents) || amountCents < 100 || amountCents > 1_000_000) {
       return NextResponse.json(
-        { error: "Minimum withdrawal is $1.00" },
+        { error: "Withdrawal must be between $1.00 and $10,000.00" },
         { status: 400 }
       );
     }
