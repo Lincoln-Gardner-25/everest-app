@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminAuth, adminDb } from "@/lib/firebase-admin";
-import { getStripe } from "@/lib/stripe";
+import { getStripe, ensureStripeCustomer } from "@/lib/stripe";
 
 async function verifyAuth(req: NextRequest): Promise<{ userId: string } | NextResponse> {
   const authHeader = req.headers.get("authorization");
@@ -32,10 +32,23 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ paymentMethod: null });
     }
 
-    // Get the customer's default payment method
-    const customer = await stripe.customers.retrieve(stripeCustomerId);
-
-    if (customer.deleted) {
+    // Verify customer still exists in Stripe
+    try {
+      const customer = await stripe.customers.retrieve(stripeCustomerId);
+      if (customer.deleted) {
+        // Clean up stale reference — will be re-created on next setup
+        await adminDb.doc(`users/${userId}`).set(
+          { stripeCustomerId: null, hasCard: false },
+          { merge: true }
+        );
+        return NextResponse.json({ paymentMethod: null });
+      }
+    } catch {
+      // Customer doesn't exist in this Stripe account — clean up
+      await adminDb.doc(`users/${userId}`).set(
+        { stripeCustomerId: null, hasCard: false },
+        { merge: true }
+      );
       return NextResponse.json({ paymentMethod: null });
     }
 

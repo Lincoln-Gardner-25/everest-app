@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminAuth, adminDb } from "@/lib/firebase-admin";
-import { getStripe, getDepositOption } from "@/lib/stripe";
+import { getStripe, getDepositOption, ensureStripeCustomer } from "@/lib/stripe";
 
 export async function POST(req: NextRequest) {
   try {
@@ -29,22 +29,7 @@ export async function POST(req: NextRequest) {
     }
 
     const stripe = getStripe();
-
-    // Get or create Stripe customer
-    const userDoc = await adminDb.doc(`users/${userId}`).get();
-    let stripeCustomerId = userDoc.data()?.stripeCustomerId;
-
-    if (!stripeCustomerId) {
-      const customer = await stripe.customers.create({
-        email: userEmail,
-        metadata: { firebaseUserId: userId },
-      });
-      stripeCustomerId = customer.id;
-      await adminDb.doc(`users/${userId}`).set(
-        { stripeCustomerId },
-        { merge: true }
-      );
-    }
+    const stripeCustomerId = await ensureStripeCustomer(userId, userEmail, adminDb);
 
     // Determine origin for redirect URLs — validate against whitelist to prevent CSRF
     const ALLOWED_ORIGINS = [

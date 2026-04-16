@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminAuth, adminDb } from "@/lib/firebase-admin";
-import { getStripe } from "@/lib/stripe";
+import { getStripe, ensureStripeCustomer } from "@/lib/stripe";
 
 export async function POST(req: NextRequest) {
   try {
@@ -21,20 +21,7 @@ export async function POST(req: NextRequest) {
     }
 
     const stripe = getStripe();
-
-    // Get or create Stripe customer
-    const userRef = adminDb.doc(`users/${userId}`);
-    const userDoc = await userRef.get();
-    let stripeCustomerId = userDoc.data()?.stripeCustomerId;
-
-    if (!stripeCustomerId) {
-      const customer = await stripe.customers.create({
-        email: userEmail,
-        metadata: { firebaseUserId: userId },
-      });
-      stripeCustomerId = customer.id;
-      await userRef.set({ stripeCustomerId }, { merge: true });
-    }
+    const stripeCustomerId = await ensureStripeCustomer(userId, userEmail, adminDb);
 
     // Create SetupIntent to collect card info without charging
     const setupIntent = await stripe.setupIntents.create({

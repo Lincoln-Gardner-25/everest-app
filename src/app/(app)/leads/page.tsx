@@ -138,7 +138,7 @@ const SIZE_OPTIONS = [
   { label: "Large", value: "large", desc: "200+" },
 ];
 
-const LEAD_COUNTS = [10, 25, 50, 100] as const;
+const LEAD_COUNTS = [10, 25, 50, 100, 250, 500] as const;
 
 // ── Page Component ──────────────────────────────────────────────────
 
@@ -171,6 +171,15 @@ export default function LeadsPage() {
   const [searchDone, setSearchDone] = useState(false);
   const [showResults, setShowResults] = useState(false);
   const [duplicatesRemoved, setDuplicatesRemoved] = useState(0);
+  const [refundInfo, setRefundInfo] = useState<{
+    amountCents: number;
+    shortfallAmountCents: number;
+    qualityAmountCents: number;
+    lowQualityCount: number;
+    via: string;
+    requestedLeads: number;
+    deliveredLeads: number;
+  } | null>(null);
 
   // Past searches
   const [pastSearches, setPastSearches] = useState<LeadSearch[]>([]);
@@ -178,6 +187,15 @@ export default function LeadsPage() {
 
   // Balance + paywall
   const { balance, loading: balanceLoading, hasPaymentMethod } = useBalance(user?.uid);
+
+  // Search disclaimer
+  const [showDisclaimer, setShowDisclaimer] = useState(false);
+  const [disclaimerDismissed, setDisclaimerDismissed] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("everest_lead_disclaimer_dismissed") === "true";
+    }
+    return false;
+  });
 
   // Enrichment state
   const [enriching, setEnriching] = useState(false);
@@ -304,6 +322,27 @@ export default function LeadsPage() {
     });
   }
 
+  // ── Search gate — show disclaimer if not yet dismissed ─────────
+  function handleSearchClick() {
+    if (disclaimerDismissed) {
+      handleSearch();
+    } else {
+      setShowDisclaimer(true);
+    }
+  }
+
+  function handleDisclaimerContinue() {
+    setShowDisclaimer(false);
+    handleSearch();
+  }
+
+  function handleDisclaimerDontShowAgain() {
+    localStorage.setItem("everest_lead_disclaimer_dismissed", "true");
+    setDisclaimerDismissed(true);
+    setShowDisclaimer(false);
+    handleSearch();
+  }
+
   // ── Search handler ──────────────────────────────────────────────
   async function handleSearch() {
     if (!user || !location.trim() || !selectedClientType) return;
@@ -345,6 +384,7 @@ export default function LeadsPage() {
       setSearchDone(true);
       setShowResults(true);
       setDuplicatesRemoved(data.duplicatesRemoved ?? 0);
+      setRefundInfo(data.refund ?? null);
       // Save to Firestore, then trigger enrichment with the searchId
       saveLeadSearch(user.uid, {
         location: location.trim(),
@@ -502,6 +542,7 @@ export default function LeadsPage() {
     setSelectedPreset(25);
     setCustomLeadInput("");
     setDuplicatesRemoved(0);
+    setRefundInfo(null);
     setShowMap(false);
     setError("");
     mapInitializedRef.current = false;
@@ -510,7 +551,10 @@ export default function LeadsPage() {
   // ── Computed values ───────────────────────────────────────────
   const filteredLeads = searchDone ? getFilteredLeads() : [];
   const starCount = filteredLeads.filter((l) => l.isStarLead).length;
-  const { total: totalCost } = calculateSearchCost(numLeads, enrichment);
+  const selectedCategoryCount = selectedClientType
+    ? (CLIENT_TYPES.find((c) => c.id === selectedClientType)?.categories.length ?? 1)
+    : 1;
+  const { chargeTotal: totalCost } = calculateSearchCost(numLeads, enrichment, selectedCategoryCount);
   const totalCostCents = dollarsToCents(totalCost);
   const canProceed = hasPaymentMethod || balance >= totalCostCents;
 
@@ -570,6 +614,32 @@ export default function LeadsPage() {
             <span className="text-sm font-medium text-blue-800">
               {duplicatesRemoved} lead{duplicatesRemoved === 1 ? "" : "s"} you already have {duplicatesRemoved === 1 ? "was" : "were"} excluded from this search.
             </span>
+          </div>
+        )}
+
+        {/* Refund banner — shortfall and/or quality */}
+        {refundInfo && (
+          <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 px-4 py-2.5 space-y-1">
+            <div className="flex items-center gap-2">
+              <Wallet className="h-4 w-4 text-amber-600 flex-shrink-0" />
+              <span className="text-sm font-semibold text-amber-900">
+                ${(refundInfo.amountCents / 100).toFixed(2)} refunded to your {refundInfo.via === "balance" ? "balance" : "card"}
+              </span>
+            </div>
+            <div className="text-xs text-amber-800 pl-6 space-y-0.5">
+              {refundInfo.shortfallAmountCents > 0 && (
+                <p>
+                  {refundInfo.deliveredLeads} of {refundInfo.requestedLeads} leads available
+                  {" "}&mdash; ${(refundInfo.shortfallAmountCents / 100).toFixed(2)} back for undelivered leads
+                </p>
+              )}
+              {refundInfo.qualityAmountCents > 0 && (
+                <p>
+                  {refundInfo.lowQualityCount} lead{refundInfo.lowQualityCount === 1 ? "" : "s"} missing
+                  website and phone &mdash; ${(refundInfo.qualityAmountCents / 100).toFixed(2)} margin refunded
+                </p>
+              )}
+            </div>
           </div>
         )}
 
@@ -1013,9 +1083,9 @@ export default function LeadsPage() {
             </div>
 
             {/* Lead count presets */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               {LEAD_COUNTS.map((count) => {
-                const cost = calculateSearchCost(count, enrichment);
+                const cost = calculateSearchCost(count, enrichment, selectedCategoryCount);
                 return (
                   <button
                     key={count}
@@ -1032,7 +1102,7 @@ export default function LeadsPage() {
                   >
                     <p className="text-2xl font-bold text-foreground">{count}</p>
                     <p className="text-xs text-muted-foreground mt-1">leads</p>
-                    <p className="text-sm font-semibold text-primary mt-2">${cost.total.toFixed(2)}</p>
+                    <p className="text-sm font-semibold text-primary mt-2">${cost.chargeTotal.toFixed(2)}</p>
                   </button>
                 );
               })}
@@ -1070,10 +1140,10 @@ export default function LeadsPage() {
                 </span>
               </div>
               <p className="text-xs text-muted-foreground">
-                ${(calculateSearchCost(1, enrichment).total).toFixed(3)}/lead base
+                ${(calculateSearchCost(1, enrichment, selectedCategoryCount).chargeTotal).toFixed(3)}/lead base
                 {customLeadInput && !selectedPreset && (
                   <span className="ml-2 font-medium text-foreground">
-                    = ${calculateSearchCost(numLeads, enrichment).total.toFixed(2)} total
+                    = ${calculateSearchCost(numLeads, enrichment, selectedCategoryCount).chargeTotal.toFixed(2)} total
                   </span>
                 )}
               </p>
@@ -1182,7 +1252,7 @@ export default function LeadsPage() {
               </Button>
               <Button
                 size="lg"
-                onClick={handleSearch}
+                onClick={handleSearchClick}
                 disabled={loading || !canProceed}
                 className="flex-1 h-12 text-base font-semibold"
               >
@@ -1213,6 +1283,45 @@ export default function LeadsPage() {
         </div>
         {renderPastSearches()}
       </div>
+
+      {/* Lead search disclaimer modal */}
+      {showDisclaimer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="w-full max-w-md rounded-2xl bg-card border shadow-xl p-6 mx-4 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-amber-100">
+                <Info className="h-5 w-5 text-amber-600" />
+              </div>
+              <h2 className="text-lg font-semibold text-foreground">Before you search</h2>
+            </div>
+
+            <div className="space-y-3 text-sm text-muted-foreground">
+              <p>
+                Lead availability depends on the area and business type you selected.
+                In some locations, there may be <span className="font-medium text-foreground">fewer leads available
+                than requested</span>.
+              </p>
+              <p>
+                If we can&apos;t deliver all the leads you paid for, you&apos;ll automatically receive a
+                <span className="font-medium text-foreground"> pro-rata refund</span> for the
+                undelivered leads &mdash; so you only pay for what you get.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-2 pt-2">
+              <Button onClick={handleDisclaimerContinue} className="w-full">
+                Got it, continue
+              </Button>
+              <button
+                onClick={handleDisclaimerDontShowAgain}
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors py-1"
+              >
+                Don&apos;t show this again
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
