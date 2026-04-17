@@ -12,6 +12,7 @@ import {
   Mountain,
   LogOut,
   Search,
+  TrendingUp,
 } from "lucide-react";
 import {
   Sidebar,
@@ -33,6 +34,7 @@ const navItems = [
   { href: "/timer", label: "Timer", icon: Timer },
   { href: "/calendar", label: "Calendar", icon: Calendar },
   { href: "/leads", label: "Leads", icon: Search },
+  { href: "/reflect", label: "Reflect", icon: TrendingUp },
   { href: "/goals", label: "Goals", icon: Target },
   { href: "/settings", label: "Settings", icon: Settings },
 ];

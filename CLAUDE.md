@@ -55,6 +55,13 @@ Named after the NK Rugged Landscape model — helping freelancers find and climb
 | `src/app/(app)/leads/page.tsx` | Leads — Google Maps + Places search + AI scoring + Excel export |
 | `src/app/api/leads/search/route.ts` | API route — geocode, Places Text Search/Details, Claude AI scoring |
 | `src/lib/leads.ts` | Firestore CRUD for lead searches — save + fetch past searches |
+| `src/app/(app)/reflect/page.tsx` | Reflect tab — monthly income review + project rankings |
+| `src/components/reflect/ReflectPage.tsx` | Reflect container — subscribes to projects, month state, composes child components |
+| `src/components/reflect/MonthSelector.tsx` | Month navigation (prev/next arrows, disabled at current month) |
+| `src/components/reflect/IncomeSummary.tsx` | Total income + color-coded breakdown grid by project type |
+| `src/components/reflect/IncomeWaterfallChart.tsx` | Recharts horizontal bar chart — income by project type |
+| `src/components/reflect/RankedProjectList.tsx` | Numbered project list sorted by income with IPH |
+| `src/lib/reflect-utils.ts` | Reflect helpers — project type colors, month filtering, groupBy, currency formatting |
 | `firebase.json` | Firebase CLI config — points to `firestore.rules` and `firestore.indexes.json` |
 
 ## Firestore Schema
