@@ -15,7 +15,7 @@ import {
   subscribeToProjectSessions,
   subscribeToActiveSession,
   clockIn,
-  clockOut,
+  assignAndClockOut,
   createManualSession,
   updateSession,
   deleteSession,
@@ -295,7 +295,9 @@ export function ProjectSessionsDialog({ open, onClose, project, userId, allProje
     if (!isValidTimestamp(activeSession.startTime)) return;
     setClockLoading(true);
     try {
-      await clockOut(activeSession.id, project.id, activeSession.startTime as Timestamp);
+      // assignAndClockOut sets projectId on the session (unlike legacy clockOut which left it null)
+      // so the session actually appears in subscribeToProjectSessions for this project
+      await assignAndClockOut(activeSession.id, project.id, activeSession.startTime as Timestamp);
     } catch (e) {
       console.error("Clock out error:", e);
     } finally {
@@ -316,11 +318,21 @@ export function ProjectSessionsDialog({ open, onClose, project, userId, allProje
     }
   }
 
-  const isClockedInToThis = !!activeSession && activeSession.projectId === projectId;
-  const isClockedInToOther = !!activeSession && activeSession.projectId !== projectId;
-  const otherProjectName = isClockedInToOther && allProjects
-    ? allProjects.find((p) => p.id === activeSession.projectId)?.name ?? "another project"
-    : "another project";
+  // Sessions created by clockIn() always start with projectId: null (project is assigned at clock-out).
+  // Treat an unassigned active session (projectId: null) as belonging to this project — clicking
+  // Clock Out here will assign it to this project via assignAndClockOut.
+  const isClockedInToThis =
+    !!activeSession &&
+    (activeSession.projectId === projectId || activeSession.projectId === null);
+  // Only show "clocked into another project" when explicitly assigned to a different project (old flow)
+  const isClockedInToOther =
+    !!activeSession &&
+    activeSession.projectId !== null &&
+    activeSession.projectId !== projectId;
+  const otherProjectName =
+    isClockedInToOther && allProjects
+      ? allProjects.find((p) => p.id === activeSession.projectId)?.name ?? "another project"
+      : "another project";
   const startTimeReady = isClockedInToThis && isValidTimestamp(activeSession?.startTime);
 
   const completedSessions = sessions.filter((s) => s.endTime !== null);
