@@ -417,7 +417,9 @@ export function ProjectTrackerPage() {
 
   const activeProjects = projects.filter((p) => p.status === "active");
   const reviewProjects = projects.filter((p) => p.status === "review");
-  const completedProjects = projects.filter((p) => p.status === "completed");
+  const completedProjects = projects
+    .filter((p) => p.status === "completed")
+    .sort((a, b) => (b.completedAt?.toMillis?.() ?? 0) - (a.completedAt?.toMillis?.() ?? 0));
   const isActive = !!activeSession;
   const startTimeReady = isActive && isValidTimestamp(activeSession?.startTime);
 
