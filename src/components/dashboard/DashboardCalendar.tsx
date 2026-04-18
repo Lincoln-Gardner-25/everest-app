@@ -116,7 +116,7 @@ export function DashboardCalendar() {
       )}
 
       {/* Calendar display */}
-      {calendarAccessToken && !loadingGCal ? (
+      {calendarAccessToken && !loadingGCal && !gcalError ? (
         <GoogleCalView
           localProjects={projects}
           localSessions={sessions}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { doc, onSnapshot } from "firebase/firestore";
+import { doc, onSnapshot, Timestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
 import {
@@ -336,7 +336,7 @@ export function ProjectTrackerPage() {
     await assignAndClockOut(
       activeSession.id,
       projectId,
-      activeSession.startTime as never,
+      activeSession.startTime as Timestamp,
       calendarEventId
     );
     setAssignDialogOpen(false);

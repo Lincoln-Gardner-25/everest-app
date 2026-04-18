@@ -14,12 +14,12 @@ import { NextResponse } from "next/server";
  */
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
-    console.log("[GHL Webhook] received:", JSON.stringify(body, null, 2));
+    await req.json(); // consume body — not logged to avoid leaking contract data
 
     // TODO: Verify GHL webhook signature
     // const signature = req.headers.get("x-ghl-signature") ?? "";
-    // if (!verifyGHLSignature(signature, rawBody)) {
+    // const secret = process.env.GHL_WEBHOOK_SECRET ?? "";  ← server-only, no NEXT_PUBLIC_ prefix
+    // if (!verifyGHLSignature(signature, rawBody, secret)) {
     //   return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
     // }
 
@@ -31,7 +31,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ received: true, status: "stub" });
   } catch (err) {
-    console.error("[GHL Webhook] error:", err);
+    console.error("[GHL Webhook] handler error:", err);
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }

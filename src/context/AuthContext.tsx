@@ -72,16 +72,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function signInWithGoogle() {
+    // Sign in only — Gmail and Calendar are connected separately via explicit opt-in
+    // (Settings page and Project Tracker "Connect Gmail" button)
     const provider = new GoogleAuthProvider();
-    // Request Gmail read-only access for contract import
-    provider.addScope("https://www.googleapis.com/auth/gmail.readonly");
-    const result = await signInWithPopup(auth, provider);
-    // Extract the OAuth access token for Gmail API calls
-    const credential = GoogleAuthProvider.credentialFromResult(result);
-    if (credential?.accessToken) {
-      setGmailAccessToken(credential.accessToken);
-      sessionStorage.setItem(GMAIL_TOKEN_KEY, credential.accessToken);
-    }
+    await signInWithPopup(auth, provider);
   }
 
   /** Get a Gmail access token WITHOUT changing the signed-in Firebase user.
