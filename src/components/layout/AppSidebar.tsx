@@ -4,15 +4,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
-  FolderOpen,
-  Calendar,
-  Timer,
-  Target,
+  FolderClock,
   Settings,
   Mountain,
   LogOut,
   Search,
-  TrendingUp,
+  BarChart2,
 } from "lucide-react";
 import {
   Sidebar,
@@ -30,12 +27,9 @@ import { useRouter } from "next/navigation";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/projects", label: "Projects", icon: FolderOpen },
-  { href: "/timer", label: "Timer", icon: Timer },
-  { href: "/calendar", label: "Calendar", icon: Calendar },
+  { href: "/project-tracker", label: "Project Tracker", icon: FolderClock },
   { href: "/leads", label: "Leads", icon: Search },
-  { href: "/reflect", label: "Reflect", icon: TrendingUp },
-  { href: "/goals", label: "Goals", icon: Target },
+  { href: "/income-report", label: "Income Report", icon: BarChart2 },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

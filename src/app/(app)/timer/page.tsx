@@ -79,7 +79,7 @@ export default function TimerPage() {
       user.uid,
       (session) => {
         setActiveSession(session);
-        if (session) setSelectedProjectId(session.projectId);
+        if (session?.projectId) setSelectedProjectId(session.projectId);
       },
       (err) => {
         console.error("subscribeToActiveSession error:", err);
@@ -137,7 +137,9 @@ export default function TimerPage() {
     setLoading(true);
     setError(null);
     try {
-      await clockIn(user.uid, selectedProjectId);
+      // Legacy timer page: clock in still requires a project for backward compat.
+      // The new Project Tracker allows clock-in without a project.
+      await clockIn(user.uid);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to clock in.");
     } finally {
@@ -149,6 +151,7 @@ export default function TimerPage() {
     if (!user || !activeSession) return;
     // Wait for serverTimestamp to resolve before allowing clock out
     if (!isValidTimestamp(activeSession.startTime)) return;
+    if (!activeSession.projectId) return; // Guard: projectId may be null in new flow
     setLoading(true);
     setError(null);
     try {

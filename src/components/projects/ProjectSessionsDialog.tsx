@@ -280,7 +280,7 @@ export function ProjectSessionsDialog({ open, onClose, project, userId, allProje
     if (!project) return;
     setClockLoading(true);
     try {
-      await clockIn(userId, project.id);
+      await clockIn(userId);
     } catch (e) {
       console.error("Clock in error:", e);
     } finally {

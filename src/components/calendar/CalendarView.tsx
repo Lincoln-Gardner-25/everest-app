@@ -44,10 +44,10 @@ interface Props {
 export function CalendarView({ projects, sessions }: Props) {
   // Completed session events — shown as time blocks in week view
   const sessionEvents = sessions
-    .filter((s) => s.endTime !== null)
+    .filter((s) => s.endTime !== null && s.projectId !== null)
     .map((s) => {
       const project = projects.find((p) => p.id === s.projectId);
-      const color = projectColor(s.projectId);
+      const color = projectColor(s.projectId as string);
       const hours = s.durationMinutes / 60;
       return {
         id: s.id,
