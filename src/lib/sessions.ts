@@ -17,24 +17,28 @@ import { db } from "@/lib/firebase";
 export interface Session {
   id: string;
   userId: string;
-  projectId: string;
+  projectId: string | null;  // null until assigned at clock-out
   startTime: Timestamp;
   endTime: Timestamp | null;
   durationMinutes: number;
   notes: string;
+  calendarEventId?: string | null; // Google Calendar event ID (optional)
 }
 
-export async function clockIn(userId: string, projectId: string) {
+/** Clock in without selecting a project — project is assigned at clock-out. */
+export async function clockIn(userId: string) {
   return addDoc(collection(db, "sessions"), {
     userId,
-    projectId,
+    projectId: null,
     startTime: serverTimestamp(),
     endTime: null,
     durationMinutes: 0,
     notes: "",
+    calendarEventId: null,
   });
 }
 
+/** Legacy clockOut — for sessions that had a projectId set at clock-in. */
 export async function clockOut(
   sessionId: string,
   projectId: string,
@@ -43,14 +47,41 @@ export async function clockOut(
   const now = Timestamp.now();
   const durationMinutes = (now.toMillis() - startTime.toMillis()) / 60000;
 
-  await updateDoc(doc(db, "sessions", sessionId), {
+  const batch = writeBatch(db);
+  batch.update(doc(db, "sessions", sessionId), {
     endTime: now,
     durationMinutes,
   });
-
-  await updateDoc(doc(db, "projects", projectId), {
+  batch.update(doc(db, "projects", projectId), {
     actualHoursTotal: increment(durationMinutes / 60),
   });
+  return batch.commit();
+}
+
+/**
+ * Assign a project and clock out in one atomic operation.
+ * Used by the new Project Tracker flow where project is chosen at clock-out.
+ */
+export async function assignAndClockOut(
+  sessionId: string,
+  projectId: string,
+  startTime: Timestamp,
+  calendarEventId?: string | null
+) {
+  const now = Timestamp.now();
+  const durationMinutes = (now.toMillis() - startTime.toMillis()) / 60000;
+
+  const batch = writeBatch(db);
+  batch.update(doc(db, "sessions", sessionId), {
+    projectId,
+    endTime: now,
+    durationMinutes,
+    ...(calendarEventId !== undefined ? { calendarEventId } : {}),
+  });
+  batch.update(doc(db, "projects", projectId), {
+    actualHoursTotal: increment(durationMinutes / 60),
+  });
+  return batch.commit();
 }
 
 export async function createManualSession(

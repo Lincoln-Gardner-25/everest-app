@@ -13,7 +13,7 @@ import { isGmailScanEnabled, setGmailScanEnabled } from "@/lib/gmail";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { CheckCircle2, KeyRound, Mail, CreditCard, Trash2, RefreshCw, Loader2, Plus, Wallet, ArrowDownToLine, ArrowUpFromLine } from "lucide-react";
+import { CheckCircle2, KeyRound, Mail, CreditCard, Trash2, RefreshCw, Loader2, Plus, Wallet, ArrowDownToLine, ArrowUpFromLine, CalendarDays, Zap, Link2, LinkIcon } from "lucide-react";
 import { useBalance } from "@/hooks/useBalance";
 import { loadStripe } from "@stripe/stripe-js";
 import { Elements, CardElement, useStripe, useElements } from "@stripe/react-stripe-js";
@@ -102,7 +102,22 @@ function CardForm({ onSuccess }: { onSuccess: () => void }) {
 }
 
 export default function SettingsPage() {
-  const { user } = useAuth();
+  const { user, calendarAccessToken, connectGoogleCalendar, disconnectGoogleCalendar } = useAuth();
+  const [calendarConnecting, setCalendarConnecting] = useState(false);
+  const [calendarError, setCalendarError] = useState("");
+
+  async function handleConnectCalendar() {
+    setCalendarConnecting(true);
+    setCalendarError("");
+    try {
+      const token = await connectGoogleCalendar();
+      if (!token) setCalendarError("Connection cancelled or failed. Please try again.");
+    } catch {
+      setCalendarError("Could not connect Google Calendar.");
+    } finally {
+      setCalendarConnecting(false);
+    }
+  }
 
   // Balance
   const { balance, loading: balanceLoading } = useBalance(user?.uid);
@@ -368,6 +383,90 @@ export default function SettingsPage() {
               />
             </button>
           </div>
+        </div>
+
+        {/* Google Calendar card */}
+        <div className="rounded-2xl border bg-card p-6 space-y-4">
+          <div className="flex items-center gap-2">
+            <CalendarDays className="h-4 w-4 text-muted-foreground" />
+            <h2 className="font-semibold text-foreground">Google Calendar</h2>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Connect your Google Calendar to automatically log clock-in/out sessions and
+            project creation events directly to your calendar.
+          </p>
+
+          {calendarAccessToken ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-4 py-3">
+                <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
+                <p className="text-sm font-medium text-green-800">
+                  Google Calendar connected
+                </p>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Sessions are being logged to your primary Google Calendar.
+                Token is valid for this browser session — reconnect if needed.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={disconnectGoogleCalendar}
+                className="text-destructive hover:text-destructive"
+              >
+                <LinkIcon className="h-3.5 w-3.5 mr-1.5" />
+                Disconnect
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <Button
+                onClick={handleConnectCalendar}
+                disabled={calendarConnecting}
+              >
+                {calendarConnecting ? (
+                  <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Connecting...</>
+                ) : (
+                  <><Link2 className="h-4 w-4 mr-2" />Connect Google Calendar</>
+                )}
+              </Button>
+              {calendarError && (
+                <p className="text-sm text-destructive">{calendarError}</p>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* GoHighLevel card */}
+        <div className="rounded-2xl border bg-card p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Zap className="h-4 w-4 text-muted-foreground" />
+              <h2 className="font-semibold text-foreground">GoHighLevel</h2>
+            </div>
+            <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">
+              Coming Soon
+            </span>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Connect GoHighLevel so that when a client signs a contract through your GHL
+            pipeline, a new project is automatically created here in Everest.
+          </p>
+          <div className="space-y-2">
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              GHL API Key
+            </label>
+            <input
+              type="text"
+              disabled
+              placeholder="Paste your GoHighLevel API key..."
+              className="w-full rounded-lg border bg-muted/40 px-3 py-2 text-sm text-muted-foreground cursor-not-allowed opacity-60"
+            />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Full integration coming soon. Once enabled, signed contracts in GHL will
+            auto-populate as new projects in your Project Tracker.
+          </p>
         </div>
 
         {/* Payment Method card */}
