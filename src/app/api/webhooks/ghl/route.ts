@@ -9,7 +9,7 @@ import { NextResponse } from "next/server";
  *
  * Setup (once GHL integration is activated in Settings):
  *  1. In GHL → Settings → Integrations → Webhooks, add this endpoint URL.
- *  2. Copy the GHL signing secret into NEXT_PUBLIC_GHL_WEBHOOK_SECRET env var.
+ *  2. Copy the GHL signing secret into GHL_WEBHOOK_SECRET env var (server-only — no NEXT_PUBLIC_ prefix).
  *  3. Uncomment the implementation below.
  */
 export async function POST(req: Request) {

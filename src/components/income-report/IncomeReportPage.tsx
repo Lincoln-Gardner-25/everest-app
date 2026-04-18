@@ -108,10 +108,7 @@ export function IncomeReportPage() {
 
   // ── Reflect derived data ───────────────────────────────────────────────
   const monthProjects = useMemo(
-    () =>
-      filterProjectsByMonth(projects, selectedYear, selectedMonth).sort(
-        (a, b) => b.quotedAmount - a.quotedAmount
-      ),
+    () => filterProjectsByMonth(projects, selectedYear, selectedMonth),
     [projects, selectedYear, selectedMonth]
   );
 
