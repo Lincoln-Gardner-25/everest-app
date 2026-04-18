@@ -56,6 +56,13 @@ export async function completeProject(projectId: string) {
   });
 }
 
+/** Update only the completedAt date — used when the user corrects which month a project belongs to. */
+export async function updateProjectCompletedAt(projectId: string, date: Date) {
+  return updateDoc(doc(db, "projects", projectId), {
+    completedAt: Timestamp.fromDate(date),
+  });
+}
+
 export async function deleteProject(projectId: string, userId: string) {
   // Delete all sessions for this project + user, then the project itself, in one batch
   const sessionsSnap = await getDocs(

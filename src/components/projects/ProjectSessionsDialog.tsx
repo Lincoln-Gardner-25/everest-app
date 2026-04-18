@@ -22,6 +22,7 @@ import {
   type Session,
 } from "@/lib/sessions";
 import type { Project } from "@/lib/projects";
+import { completeProject } from "@/lib/projects";
 import { Timestamp } from "firebase/firestore";
 
 interface Props {
@@ -112,6 +113,7 @@ export function ProjectSessionsDialog({ open, onClose, project, userId, allProje
   const [activeSession, setActiveSession] = useState<Session | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [clockLoading, setClockLoading] = useState(false);
+  const [completing, setCompleting] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const projectId = project?.id;
@@ -298,6 +300,19 @@ export function ProjectSessionsDialog({ open, onClose, project, userId, allProje
       console.error("Clock out error:", e);
     } finally {
       setClockLoading(false);
+    }
+  }
+
+  async function handleMarkComplete() {
+    if (!confirm(`Mark "${p.name}" as complete? This will close the project.`)) return;
+    setCompleting(true);
+    try {
+      await completeProject(p.id);
+      onClose();
+    } catch (e) {
+      console.error("Complete project error:", e);
+    } finally {
+      setCompleting(false);
     }
   }
 
@@ -585,6 +600,22 @@ export function ProjectSessionsDialog({ open, onClose, project, userId, allProje
             </div>
           )}
         </div>
+
+        {/* Mark complete — shown for active and review projects */}
+        {(p.status === "active" || p.status === "review") && (
+          <div className="border-t pt-4 mt-2">
+            <Button
+              variant="outline"
+              className="w-full text-muted-foreground hover:text-foreground"
+              onClick={handleMarkComplete}
+              disabled={completing || isClockedInToThis}
+              title={isClockedInToThis ? "Clock out before completing" : undefined}
+            >
+              <Check className="h-4 w-4 mr-2" />
+              {completing ? "Completing..." : "Mark project as complete"}
+            </Button>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );

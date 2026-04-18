@@ -28,7 +28,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { type Project, type ProjectInput } from "@/lib/projects";
+import { type Project, type ProjectInput, updateProjectCompletedAt } from "@/lib/projects";
+
+function toInputDate(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
 
 const PROJECT_TYPES = [
   "Wedding",
@@ -49,6 +56,7 @@ const schema = z.object({
   estimatedHours: z.number().min(0.1, "Enter estimated hours"),
   status: z.enum(["active", "review", "completed"]),
   notes: z.string(),
+  completedDate: z.string().optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -73,6 +81,7 @@ export function ProjectFormDialog({ open, onClose, onSubmit, project }: Props) {
       estimatedHours: 0,
       status: "active",
       notes: "",
+      completedDate: "",
     },
   });
 
@@ -86,6 +95,9 @@ export function ProjectFormDialog({ open, onClose, onSubmit, project }: Props) {
         estimatedHours: project.estimatedHours,
         status: project.status,
         notes: project.notes,
+        completedDate: project.completedAt
+          ? toInputDate(project.completedAt.toDate())
+          : toInputDate(new Date()),
       });
     } else {
       form.reset({
@@ -96,12 +108,17 @@ export function ProjectFormDialog({ open, onClose, onSubmit, project }: Props) {
         estimatedHours: 0,
         status: "active",
         notes: "",
+        completedDate: "",
       });
     }
   }, [project, form]);
 
   async function handleSubmit(values: FormValues) {
     await onSubmit(values as ProjectInput);
+    // If editing a completed project, also persist the completion date
+    if (isEdit && project && values.status === "completed" && values.completedDate) {
+      await updateProjectCompletedAt(project.id, new Date(values.completedDate + "T12:00"));
+    }
     onClose();
   }
 
@@ -238,6 +255,26 @@ export function ProjectFormDialog({ open, onClose, onSubmit, project }: Props) {
                 </FormItem>
               )}
             />
+
+            {/* Completion date — only shown when editing a completed project */}
+            {isEdit && form.watch("status") === "completed" && (
+              <FormField
+                control={form.control}
+                name="completedDate"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Completion date</FormLabel>
+                    <FormControl>
+                      <Input type="date" {...field} />
+                    </FormControl>
+                    <p className="text-xs text-muted-foreground">
+                      Controls which month this project appears in on the calendar and income report.
+                    </p>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
 
             {/* Projected IPH preview */}
             {form.watch("quotedAmount") > 0 && form.watch("estimatedHours") > 0 && (
