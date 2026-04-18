@@ -53,5 +53,9 @@ service cloud.firestore {
     match /balanceTransactions/{txId} {
       allow read, write: if false;
     }
+    // Failed refunds awaiting manual recovery — admin SDK only
+    match /pendingRefunds/{refundId} {
+      allow read, write: if false;
+    }
   }
 }

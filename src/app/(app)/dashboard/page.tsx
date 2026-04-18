@@ -450,11 +450,12 @@ export default function DashboardPage() {
               )}
               <Button
                 onClick={handleClockIn}
-                disabled={clockLoading}
+                disabled={clockLoading || !mostRecentActive}
                 className="w-full"
+                title={!mostRecentActive ? "Create an active project first" : undefined}
               >
                 <PlayCircle className="h-4 w-4 mr-2" />
-                Clock In
+                {mostRecentActive ? "Clock In" : "No active projects"}
               </Button>
             </>
           )}

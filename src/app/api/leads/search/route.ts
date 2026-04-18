@@ -697,7 +697,13 @@ export async function POST(req: NextRequest) {
             refundedVia = "balance";
           } catch (refundErr) {
             console.error("[REFUND] Balance refund failed:", refundErr);
-            refundCents = 0; // Don't report refund if it failed
+            // Track the failed refund so it can be manually recovered
+            await adminDb.collection("pendingRefunds").add({
+              userId, type: "shortfall_balance", amountCents: refundCents,
+              reason: `${leadCount - delivered}/${leadCount} leads shortfall`,
+              paymentIntentId: null, location, createdAt: FieldValue.serverTimestamp(),
+            }).catch(() => {});
+            refundCents = 0;
           }
         } else if (paymentIntentId) {
           // Partial Stripe refund
@@ -716,6 +722,12 @@ export async function POST(req: NextRequest) {
             refundedVia = "card";
           } catch (refundErr) {
             console.error("[REFUND] Stripe refund failed:", refundErr);
+            // Track the failed refund so it can be manually recovered
+            await adminDb.collection("pendingRefunds").add({
+              userId, type: "shortfall_stripe", amountCents: refundCents,
+              reason: `${leadCount - delivered}/${leadCount} leads shortfall`,
+              paymentIntentId, location, createdAt: FieldValue.serverTimestamp(),
+            }).catch(() => {});
             refundCents = 0;
           }
         }
@@ -743,6 +755,11 @@ export async function POST(req: NextRequest) {
           refundedVia = "balance";
         } catch (refundErr) {
           console.error("[REFUND] Full balance refund failed:", refundErr);
+          await adminDb.collection("pendingRefunds").add({
+            userId, type: "full_refund_balance", amountCents: refundCents,
+            reason: "0 leads delivered",
+            paymentIntentId: null, location, createdAt: FieldValue.serverTimestamp(),
+          }).catch(() => {});
           refundCents = 0;
         }
       } else if (paymentIntentId) {
@@ -761,6 +778,11 @@ export async function POST(req: NextRequest) {
           refundedVia = "card";
         } catch (refundErr) {
           console.error("[REFUND] Full Stripe refund failed:", refundErr);
+          await adminDb.collection("pendingRefunds").add({
+            userId, type: "full_refund_stripe", amountCents: refundCents,
+            reason: "0 leads delivered",
+            paymentIntentId, location, createdAt: FieldValue.serverTimestamp(),
+          }).catch(() => {});
           refundCents = 0;
         }
       }
