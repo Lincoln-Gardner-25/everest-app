@@ -4,6 +4,11 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/context/AuthContext";
 import "./globals.css";
 
+// All pages require Firebase Auth — prevent Next.js from trying to
+// statically pre-render them at build time, which would fail because
+// NEXT_PUBLIC_FIREBASE_* env vars are not available during SSR/build.
+export const dynamic = "force-dynamic";
+
 const inter = Inter({
   variable: "--font-inter",
   subsets: ["latin"],
