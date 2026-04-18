@@ -18,6 +18,7 @@ import {
   clockIn,
   assignAndClockOut,
   subscribeToActiveSession,
+  subscribeToUserSessions,
   type Session,
 } from "@/lib/sessions";
 import {
@@ -127,6 +128,7 @@ export function ProjectTrackerPage() {
 
   // Projects state
   const [projects, setProjects] = useState<Project[]>([]);
+  const [userSessions, setUserSessions] = useState<Session[]>([]);
   const [targetRate, setTargetRate] = useState(0);
   const [projectsError, setProjectsError] = useState<string | null>(null);
 
@@ -189,6 +191,12 @@ export function ProjectTrackerPage() {
         );
       }
     );
+  }, [user]);
+
+  // Subscribe to all user sessions — used to sort completed projects by last entry date
+  useEffect(() => {
+    if (!user) return;
+    return subscribeToUserSessions(user.uid, setUserSessions);
   }, [user]);
 
   // Elapsed ticker
@@ -417,9 +425,24 @@ export function ProjectTrackerPage() {
 
   const activeProjects = projects.filter((p) => p.status === "active");
   const reviewProjects = projects.filter((p) => p.status === "review");
+
+  // Build a map of projectId → latest session startTime (ms) from the live session feed
+  const lastSessionMsByProject = new Map<string, number>();
+  for (const s of userSessions) {
+    if (!s.projectId || !isValidTimestamp(s.startTime)) continue;
+    const ms = s.startTime.toMillis();
+    const current = lastSessionMsByProject.get(s.projectId) ?? 0;
+    if (ms > current) lastSessionMsByProject.set(s.projectId, ms);
+  }
+
   const completedProjects = projects
     .filter((p) => p.status === "completed")
-    .sort((a, b) => (b.completedAt?.toMillis?.() ?? 0) - (a.completedAt?.toMillis?.() ?? 0));
+    .sort((a, b) => {
+      // Prefer last session date; fall back to completedAt if no sessions logged
+      const aMs = lastSessionMsByProject.get(a.id) ?? a.completedAt?.toMillis?.() ?? 0;
+      const bMs = lastSessionMsByProject.get(b.id) ?? b.completedAt?.toMillis?.() ?? 0;
+      return bMs - aMs;
+    });
   const isActive = !!activeSession;
   const startTimeReady = isActive && isValidTimestamp(activeSession?.startTime);
 
