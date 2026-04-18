@@ -28,6 +28,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import { Timestamp } from "firebase/firestore";
 import { type Project, type ProjectInput, updateProjectCompletedAt } from "@/lib/projects";
 
 function toInputDate(d: Date) {
@@ -56,6 +57,7 @@ const schema = z.object({
   estimatedHours: z.number().min(0.1, "Enter estimated hours"),
   status: z.enum(["active", "review", "completed"]),
   notes: z.string(),
+  dueDate: z.string().optional(),
   completedDate: z.string().optional(),
 });
 
@@ -81,6 +83,7 @@ export function ProjectFormDialog({ open, onClose, onSubmit, project }: Props) {
       estimatedHours: 0,
       status: "active",
       notes: "",
+      dueDate: "",
       completedDate: "",
     },
   });
@@ -95,6 +98,7 @@ export function ProjectFormDialog({ open, onClose, onSubmit, project }: Props) {
         estimatedHours: project.estimatedHours,
         status: project.status,
         notes: project.notes,
+        dueDate: project.dueDate ? toInputDate(project.dueDate.toDate()) : "",
         completedDate: project.completedAt
           ? toInputDate(project.completedAt.toDate())
           : toInputDate(new Date()),
@@ -108,13 +112,17 @@ export function ProjectFormDialog({ open, onClose, onSubmit, project }: Props) {
         estimatedHours: 0,
         status: "active",
         notes: "",
+        dueDate: "",
         completedDate: "",
       });
     }
   }, [project, form]);
 
   async function handleSubmit(values: FormValues) {
-    await onSubmit(values as ProjectInput);
+    const dueDate = values.dueDate
+      ? Timestamp.fromDate(new Date(values.dueDate + "T12:00"))
+      : null;
+    await onSubmit({ ...values, dueDate } as ProjectInput);
     // If editing a completed project, also persist the completion date
     if (isEdit && project && values.status === "completed" && values.completedDate) {
       await updateProjectCompletedAt(project.id, new Date(values.completedDate + "T12:00"));
@@ -255,6 +263,23 @@ export function ProjectFormDialog({ open, onClose, onSubmit, project }: Props) {
                 </FormItem>
               )}
             />
+
+            {/* Due date — shown for new and active/review projects */}
+            {(!isEdit || form.watch("status") !== "completed") && (
+              <FormField
+                control={form.control}
+                name="dueDate"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Due date <span className="text-muted-foreground font-normal">(optional)</span></FormLabel>
+                    <FormControl>
+                      <Input type="date" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
 
             {/* Completion date — only shown when editing a completed project */}
             {isEdit && form.watch("status") === "completed" && (

@@ -29,6 +29,7 @@ export interface Project {
   notes: string;
   createdAt: Timestamp;
   completedAt: Timestamp | null;
+  dueDate?: Timestamp | null;
   gmailMessageId?: string;
   gmailThreadId?: string;
 }

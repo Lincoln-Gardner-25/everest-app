@@ -53,6 +53,8 @@ import {
   Plus,
   Mail,
   Loader2,
+  CalendarClock,
+  CalendarCheck,
 } from "lucide-react";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -72,6 +74,14 @@ function formatHours(h: number) {
 
 function isValidTimestamp(ts: unknown): ts is { toMillis: () => number } {
   return ts != null && typeof (ts as { toMillis?: unknown }).toMillis === "function";
+}
+
+function formatCardDate(ts: { toDate: () => Date } | null | undefined): string | null {
+  if (!ts?.toDate) return null;
+  const d = ts.toDate();
+  const now = new Date();
+  const year = d.getFullYear() !== now.getFullYear() ? "numeric" : undefined;
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", ...(year ? { year } : {}) });
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -640,6 +650,12 @@ export function ProjectTrackerPage() {
                     {items.map((project) => {
                       const barColor = getIPHBarColor(project, targetRate);
                       const hasHours = project.actualHoursTotal && project.actualHoursTotal > 0.001;
+                      // For completed projects, prefer the last session date over completedAt
+                      // so the displayed date always matches the chronological sort order
+                      const lastSessionMs = lastSessionMsByProject.get(project.id);
+                      const completedDisplayDate = lastSessionMs
+                        ? { toDate: () => new Date(lastSessionMs) }
+                        : project.completedAt;
                       return (
                         <div
                           key={project.id}
@@ -681,6 +697,28 @@ export function ProjectTrackerPage() {
                               <p className="text-xs text-muted-foreground mb-0.5">IPH</p>
                               <IPHBadge project={project} targetRate={targetRate} />
                             </div>
+                            {/* Due date (active/review) or completed date (completed) */}
+                            {project.status === "completed" ? (
+                              <div className="text-right w-24">
+                                <p className="text-xs text-muted-foreground mb-0.5">Completed</p>
+                                <div className="flex items-center gap-1 justify-end">
+                                  <CalendarCheck className="h-3 w-3 text-green-600" />
+                                  <p className="text-sm font-semibold text-green-700">
+                                    {formatCardDate(completedDisplayDate) ?? "—"}
+                                  </p>
+                                </div>
+                              </div>
+                            ) : project.dueDate ? (
+                              <div className="text-right w-24">
+                                <p className="text-xs text-muted-foreground mb-0.5">Due</p>
+                                <div className="flex items-center gap-1 justify-end">
+                                  <CalendarClock className="h-3 w-3 text-muted-foreground" />
+                                  <p className="text-sm font-semibold">
+                                    {formatCardDate(project.dueDate) ?? "—"}
+                                  </p>
+                                </div>
+                              </div>
+                            ) : null}
                           </div>
 
                           <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
