@@ -13,7 +13,7 @@ Named after the NK Rugged Landscape model — helping freelancers find and climb
 - **Zustand** (state), **Recharts** (charts), **Lucide React** (icons)
 - **Google Maps**: `@googlemaps/js-api-loader` v2 (functional API: `setOptions()` + `importLibrary()`)
 - **Google Places API**: server-side only (Text Search + Place Details)
-- **Anthropic Claude API**: `@anthropic-ai/sdk` — AI lead scoring in `/api/leads/search`
+- **Lead scoring**: rule-based algorithm (rating + review count + website + phone + category) — no Anthropic API required
 - **Excel Export**: `exceljs` — client-side .xlsx generation
 - **Fonts**: Inter (body/UI) + Libre Baskerville (headings)
 - **Deployment**: Vercel — https://vercel.com/lincoln-gardners-projects/everest-app
@@ -30,7 +30,8 @@ Named after the NK Rugged Landscape model — helping freelancers find and climb
 ## Key Files
 | File | Purpose |
 |------|---------|
-| `src/app/layout.tsx` | Root layout — AuthProvider + TooltipProvider + fonts |
+| `src/app/layout.tsx` | Root layout — AuthProvider + TooltipProvider + fonts + `export const dynamic = "force-dynamic"` (prevents Firebase crash during Vercel build) |
+| `src/lib/firebase.ts` | Firebase client init — `?? ""` fallbacks on all env vars; guarded against undefined during SSR |
 | `src/app/(app)/layout.tsx` | Protected shell — auth guard + sidebar |
 | `src/app/(auth)/layout.tsx` | Auth pages layout (split-panel) |
 | `src/app/(auth)/login/page.tsx` | Login (email + Google) |
@@ -46,7 +47,7 @@ Named after the NK Rugged Landscape model — helping freelancers find and climb
 | `src/app/(app)/calendar/page.tsx` | Calendar (kept on disk, content moved to dashboard) |
 | `src/app/(app)/reflect/page.tsx` | Reflect (kept on disk, superseded by Income Report in nav) |
 | `src/app/(app)/goals/page.tsx` | Goals (kept on disk, superseded by Income Report in nav) |
-| `src/app/api/leads/search/route.ts` | API route — geocode, Places Text Search/Details, Claude AI scoring, Stripe payment gate |
+| `src/app/api/leads/search/route.ts` | API route — geocode, Places Text Search/Details, rule-based scoring, Stripe/balance payment gate, shortfall + quality refunds, failed refund tracking |
 | `src/app/api/webhooks/ghl/route.ts` | **New** GoHighLevel webhook stub — skeleton for contract-signed events |
 | `src/components/layout/AppSidebar.tsx` | Sidebar nav — 5 tabs: Dashboard, Project Tracker, Leads, Income Report, Settings |
 | `src/components/project-tracker/ProjectTrackerPage.tsx` | **New** combined timer + projects + Gmail scanner component |
@@ -132,6 +133,15 @@ searchCharges/{chargeId}             ← admin SDK only, audit trail for every p
   - paymentIntentId: string
   - enrichmentOptions: object
   - createdAt: timestamp
+
+pendingRefunds/{refundId}            ← admin SDK only, written when a Stripe/balance refund fails
+  - userId: string
+  - type: "shortfall_balance" | "shortfall_stripe" | "full_refund_balance" | "full_refund_stripe"
+  - amountCents: number
+  - reason: string
+  - paymentIntentId: string | null
+  - location: string
+  - createdAt: timestamp
 ```
 
 ## What's Built
@@ -190,16 +200,23 @@ searchCharges/{chargeId}             ← admin SDK only, audit trail for every p
 - [x] AuthContext additions — `calendarAccessToken`, `connectGoogleCalendar()`, `disconnectGoogleCalendar()`, `signOut` clears both Gmail and Calendar tokens
 - [x] Dashboard leads search — fixed 401 Unauthorized; now sends `Authorization: Bearer {token}` header via `user.getIdToken()`
 - [x] Leads cost disclaimer on dashboard — amber banner with Cancel + "Confirm & Search" buttons gates every dashboard lead search
+- [x] **Security audit fixes** — DashboardCalendar falls back to local view on gcal error; `as never` Timestamp cast replaced with `as Timestamp`; GHL webhook no longer logs raw contract body; Gmail scope removed from `signInWithGoogle()` (explicit opt-in only via connectGmail)
+- [x] **Financial audit fixes** — Dashboard Clock-In button disabled when no active projects (prevents stuck-clocked-in state); failed Stripe/balance refunds now written to `pendingRefunds` Firestore collection instead of silently zeroed; `pendingRefunds` collection locked to admin SDK in Firestore rules
+- [x] **Vercel build fix** — `export const dynamic = "force-dynamic"` added to root `layout.tsx`; `?? ""` fallbacks added to all Firebase env vars in `firebase.ts`; prevents `auth/invalid-api-key` crash during Next.js static page generation
+- [x] `final-project` branch merged to `main` and deployed to Vercel (everest-app-delta.vercel.app) — Status: Ready
+- [x] All required env vars confirmed in Vercel: 7 × `NEXT_PUBLIC_FIREBASE_*`, `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`, `GOOGLE_PLACES_API_KEY`, `NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID`
+- [x] Duplicate Vercel project (`everest`) identified — should be deleted; `everest-app` is the canonical production project
 
 ## What Still Needs Doing
 - **Google Cloud Console** — enable **Google Calendar API** in APIs & Services > Library for project `everest-app-c7664`
 - **OAuth consent screen** — add `https://www.googleapis.com/auth/calendar` scope under Data Access > Scopes (same screen where `gmail.readonly` was added)
 - **GoHighLevel** — real webhook implementation deferred; needs GHL account access + webhook secret from user's brother before building out; stub is in place at `/api/webhooks/ghl/route.ts`
 - **Expense tracking** — not yet built; deferred to future sprint
-- Add env vars to `.env.local` and Vercel: `GOOGLE_PLACES_API_KEY`, `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`, `ANTHROPIC_API_KEY` (if not already added)
-- Live test Gmail contract scanner with real Google sign-in + signed contract email
+- **Delete duplicate Vercel project** — the `everest` project (no production deployment) should be deleted; keep `everest-app` only
+- Live test Gmail contract scanner with real Google sign-in + signed contract email in production
 - Live test Google Calendar connect flow in Settings — verify events appear in Google Calendar on project create + clock in/out
-- Merge `final-project` branch to `main` + push to Vercel when ready to deploy
+- Live test leads search in production — confirm `GOOGLE_PLACES_API_KEY` and `NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID` work end-to-end
+- Monitor `pendingRefunds` collection in Firebase Console — if any documents appear, manually issue refunds to affected users
 
 ## Google Cloud Console Setup (project: everest-app-c7664)
 - **Gmail API**: enabled in APIs & Services > Library
@@ -208,7 +225,8 @@ searchCharges/{chargeId}             ← admin SDK only, audit trail for every p
 - **OAuth client** (Web client, auto-created by Firebase): authorized JS origins include `https://everest-app-delta.vercel.app`; authorized redirect URIs include `https://everest-app-delta.vercel.app/__/auth/handler`
 - **Test users**: app is in "Testing" mode — only users listed under Audience > Test users can sign in. Add new testers there.
 - **Firebase Auth**: `everest-app-delta.vercel.app` added as authorized domain in Authentication > Settings > Authorized domains
-- **Local branches**: `main-one` = pre-merge snapshot of main; `main-two` = main with moneyt merged (same as current `main`); `feature/leads-tab` = leads feature (code complete, needs env vars + testing); `final-project` = major UX restructure (current active branch)
+- **Local branches**: `main-one` = pre-merge snapshot of main; `main-two` = main with moneyt merged; `feature/leads-tab` = leads feature (merged); `final-project` = major UX restructure (merged to main)
+- **Vercel env vars confirmed in production**: `NEXT_PUBLIC_FIREBASE_API_KEY`, `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`, `NEXT_PUBLIC_FIREBASE_PROJECT_ID`, `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`, `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID`, `NEXT_PUBLIC_FIREBASE_APP_ID`, `NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID`, `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`, `GOOGLE_PLACES_API_KEY`, `NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID`
 
 ## Important Notes
 - All APIs/services are $0 — Firebase Spark (free tier), Vercel Hobby (free)
@@ -229,4 +247,8 @@ searchCharges/{chargeId}             ← admin SDK only, audit trail for every p
 - Vercel project: https://vercel.com/lincoln-gardners-projects/everest-app
 - `@googlemaps/js-api-loader` v2 uses functional API — `setOptions({ key, v })` + `importLibrary("maps")`, NOT the old `new Loader({ apiKey }).load()`. Property names are `key` (not `apiKey`) and `v` (not `version`).
 - Leads API route calls Google Places server-side only (`GOOGLE_PLACES_API_KEY` — no `NEXT_PUBLIC_` prefix). Client only uses `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` for map rendering.
+- **Lead scoring is rule-based** — NOT using the Anthropic/Claude API. Scoring uses rating, review count, website presence, phone presence, and business category. `ANTHROPIC_API_KEY` is not required.
+- **`force-dynamic` in root layout** — `export const dynamic = "force-dynamic"` in `src/app/layout.tsx` prevents Next.js from statically pre-rendering pages at build time. Required because Firebase Auth initializes at module level and crashes when `NEXT_PUBLIC_FIREBASE_*` env vars are unavailable during SSR. Do not remove this.
+- **`pendingRefunds` collection** — written by the leads API route when a Stripe or balance refund fails. Admin SDK only (Firestore rules block client access). Check Firebase Console periodically and manually refund any documents found there.
+- **`NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID`** — required for Gmail and Google Calendar connect buttons (GIS token flow). Get from Google Cloud Console → Credentials → OAuth 2.0 Client IDs → Web client. Without it, the connect popups will not open.
 - **Pre-commit hook** at `.git/hooks/pre-commit` — calls Claude API (`claude-haiku-4-5-20251001`) on every commit to auto-update the "What's Built" / "What Still Needs Doing" / "Key Files" sections. Requires `ANTHROPIC_API_KEY` in shell env; skips gracefully if not set. To enable: `echo 'export ANTHROPIC_API_KEY="sk-ant-..."' >> ~/.zshrc && source ~/.zshrc`
